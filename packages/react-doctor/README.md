@@ -6,7 +6,6 @@
 
 [![version](https://img.shields.io/npm/v/react-doctor?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/react-doctor)
 [![downloads](https://img.shields.io/npm/dt/react-doctor.svg?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/react-doctor)
-[![GitHub Action](https://img.shields.io/badge/GitHub%20Action-React%20Doctor-000000?style=flat&labelColor=000000&logo=githubactions&logoColor=white)](https://github.com/marketplace/actions/react-doctor)
 
 Your agent writes bad React, this catches it.
 
@@ -48,7 +47,9 @@ This currently installs project hooks for Claude Code and Cursor that run after 
 
 ### 3. Run in CI (GitHub Actions) for your team
 
-Add a workflow to scan every pull request and leave findings where reviewers already look:
+[![GitHub Action](https://img.shields.io/badge/GitHub%20Action-React%20Doctor-000000?style=flat&labelColor=000000&logo=githubactions&logoColor=white)](https://github.com/marketplace/actions/react-doctor)
+
+Use the reusable GitHub Action to scan every pull request and leave findings where reviewers already look:
 
 ```yaml
 name: React Doctor
