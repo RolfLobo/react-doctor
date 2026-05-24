@@ -38,11 +38,6 @@ npx react-doctor@latest install
 
 Works with Claude Code, Cursor, Codex, OpenCode, and many more.
 
-```bash
-npx react-doctor@latest install --agent-hooks
-```
-
-This currently installs project hooks for Claude Code and Cursor that run after agent file edits and feed findings back without blocking tool calls.
 
 ### 3. Run in CI (GitHub Actions) for your team
 
