@@ -13,7 +13,7 @@ React Doctor deterministically scans your codebase and finds issues across state
 
 Works for all React frameworks and libraries - Next.js, Vite, TanStack, React Native, Expo, you name it.
 
-### [View demo](https://react.doctor)
+### [View demo →](https://react.doctor)
 
 ## Install
 
@@ -79,30 +79,7 @@ jobs:
 
 Configuration, custom rules, standalone plugins, CLI reference, and API details live in the docs:
 
-### [View docs](https://react.doctor/docs)
-
-## Leaderboard
-
-Top React codebases scanned by React Doctor, ranked by score. Updated automatically from [millionco/react-doctor-benchmarks](https://github.com/millionco/react-doctor-benchmarks).
-
-<!-- LEADERBOARD:START -->
-<!-- prettier-ignore -->
-| #  | Repo | Score |
-| -- | ---- | ----: |
-| 1  | [executor](https://github.com/RhysSullivan/executor) | 96 |
-| 2  | [nodejs.org](https://github.com/nodejs/nodejs.org) | 86 |
-| 3  | [tldraw](https://github.com/tldraw/tldraw) | 71 |
-| 4  | [t3code](https://github.com/pingdotgg/t3code) | 69 |
-| 5  | [better-auth](https://github.com/better-auth/better-auth) | 64 |
-| 6  | [mastra](https://github.com/mastra-ai/mastra) | 63 |
-| 7  | [excalidraw](https://github.com/excalidraw/excalidraw) | 62 |
-| 8  | [payload](https://github.com/payloadcms/payload) | 60 |
-| 9  | [typebot](https://github.com/baptisteArno/typebot.io) | 57 |
-| 10 | [medusajs/admin](https://github.com/medusajs/medusa) | 56 |
-
-<!-- LEADERBOARD:END -->
-
-See the [full leaderboard](https://www.react.doctor/leaderboard).
+### [View docs →](https://react.doctor/docs)
 
 ## Contributing
 
