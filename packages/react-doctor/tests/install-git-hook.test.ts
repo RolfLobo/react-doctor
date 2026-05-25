@@ -63,10 +63,14 @@ describe("installReactDoctorGitHook", () => {
     expect(result.status).toBe("created");
     expect(result.kind).toBe("git");
     expect(hookContent).toContain("#!/bin/sh");
-    expect(hookContent).toContain("react-doctor --staged --fail-on none");
-    expect(hookContent).toContain("pnpm dlx react-doctor@latest --staged --fail-on none");
-    expect(hookContent).toContain("npx --yes react-doctor@latest --staged --fail-on none");
-    expect(hookContent).toContain("if ! react_doctor_scan_staged_files; then");
+    expect(hookContent).toContain("react-doctor --staged --fail-on warning");
+    expect(hookContent).toContain(
+      "pnpm dlx react-doctor@latest --staged --fail-on warning",
+    );
+    expect(hookContent).toContain(
+      "npx --yes react-doctor@latest --staged --fail-on warning",
+    );
+    expect(hookContent).toContain("react_doctor_prompt_to_fix");
     expect(hookContent).not.toContain(".react-doctor/hooks/pre-commit");
     expect(hookContent).not.toContain("husky");
     expect(existsSync(fixture.hookPath)).toBe(true);
@@ -100,7 +104,7 @@ describe("installReactDoctorGitHook", () => {
     const managedBlockMatches = hookContent.match(/# react-doctor hook start/g) ?? [];
 
     expect(managedBlockMatches).toHaveLength(1);
-    expect(hookContent).toContain("react-doctor --staged --fail-on none");
+    expect(hookContent).toContain("react-doctor --staged --fail-on warning");
   });
 
   it("replaces the legacy managed-runner launcher block", () => {
@@ -126,7 +130,7 @@ describe("installReactDoctorGitHook", () => {
 
     const hookContent = readHook(fixture.hookPath);
     expect(hookContent).toContain("# react-doctor hook start");
-    expect(hookContent).toContain("react-doctor --staged --fail-on none");
+    expect(hookContent).toContain("react-doctor --staged --fail-on warning");
     expect(hookContent).not.toContain("hook launcher");
     expect(hookContent).not.toContain(".react-doctor/hooks/pre-commit");
     expect(existsSync(legacyRunnerPath)).toBe(false);
@@ -240,7 +244,9 @@ describe("installReactDoctorGitHook", () => {
         encoding: "utf8",
       }).trim(),
     ).toBe(".husky");
-    expect(readHook(target.hookPath)).toContain("react-doctor --staged --fail-on none");
+    expect(readHook(target.hookPath)).toContain(
+      "react-doctor --staged --fail-on warning",
+    );
   });
 
   it("uses Vite Plus hooks when the project has Vite Plus installed", () => {
@@ -274,7 +280,9 @@ describe("installReactDoctorGitHook", () => {
         encoding: "utf8",
       }).trim(),
     ).toBe(".vite-hooks");
-    expect(readHook(target.hookPath)).toContain("react-doctor --staged --fail-on none");
+    expect(readHook(target.hookPath)).toContain(
+      "react-doctor --staged --fail-on warning",
+    );
   });
 
   it("uses Husky before Vite Plus when both are present", () => {
@@ -332,7 +340,8 @@ describe("installReactDoctorGitHook", () => {
     const preCommit = packageJson["simple-git-hooks"]["pre-commit"];
     expect(target.kind).toBe("simple-git-hooks");
     expect(preCommit).toContain("pnpm lint");
-    expect(preCommit.match(/react-doctor --staged --fail-on none/g)).toHaveLength(1);
+    expect(preCommit.match(/react_doctor_output=\$\(mktemp/g)).toHaveLength(1);
+    expect(preCommit).toContain("react-doctor --staged --fail-on warning");
   });
 
   it("creates lefthook config for lefthook projects", () => {
@@ -360,8 +369,9 @@ describe("installReactDoctorGitHook", () => {
 
     const configContent = readFileSync(path.join(fixture.projectRoot, "lefthook.yml"), "utf8");
     expect(target.kind).toBe("lefthook");
-    expect(configContent.match(/react-doctor/g)).toHaveLength(2);
-    expect(configContent).toContain("run: react-doctor --staged --fail-on none || true");
+    expect(configContent.match(/react_doctor_output=\$\(mktemp/g)).toHaveLength(1);
+    expect(configContent).toContain("run: react_doctor_output=$(mktemp");
+    expect(configContent).toContain("React Doctor found staged regressions.");
   });
 
   it("merges React Doctor into an existing Lefthook pre-commit section", () => {
@@ -396,9 +406,7 @@ describe("installReactDoctorGitHook", () => {
     expect(configContent.match(/^pre-commit:/gm)).toHaveLength(1);
     expect(preCommitSection.match(/^  commands:/gm)).toHaveLength(1);
     expect(configContent).toContain("    lint:\n      run: pnpm lint");
-    expect(configContent).toContain(
-      "    react-doctor:\n      run: react-doctor --staged --fail-on none || true",
-    );
+    expect(configContent).toContain("    react-doctor:\n      run: react_doctor_output=$(mktemp");
     expect(configContent).toContain("commit-msg:");
   });
 
@@ -425,7 +433,7 @@ describe("installReactDoctorGitHook", () => {
     const configContent = readFileSync(configPath, "utf8");
     expect(target.kind).toBe("pre-commit");
     expect(configContent.match(/id: react-doctor/g)).toHaveLength(1);
-    expect(configContent).toContain("entry: sh -c 'react-doctor --staged --fail-on none || true'");
+    expect(configContent).toContain("entry: sh -c 'react_doctor_output=$(mktemp");
   });
 
   it("updates Overcommit config", () => {
@@ -452,7 +460,7 @@ describe("installReactDoctorGitHook", () => {
     expect(target.kind).toBe("overcommit");
     expect(configContent.match(/ReactDoctor/g)).toHaveLength(1);
     expect(configContent).toContain(
-      "command: ['sh', '-c', 'react-doctor --staged --fail-on none || true']",
+      "command: ['sh', '-c', 'react_doctor_output=$(mktemp",
     );
   });
 
@@ -514,7 +522,7 @@ describe("installReactDoctorGitHook", () => {
     expect(target.kind).toBe("yorkie");
     expect(packageJson.gitHooks["pre-commit"]).toContain("pnpm lint");
     expect(packageJson.gitHooks["pre-commit"]).toContain(
-      "react-doctor --staged --fail-on none || true",
+      "react-doctor --staged --fail-on warning",
     );
   });
 
@@ -546,7 +554,7 @@ describe("installReactDoctorGitHook", () => {
     expect(target.kind).toBe("ghooks");
     expect(packageJson.config.ghooks["pre-commit"]).toContain("pnpm lint");
     expect(packageJson.config.ghooks["pre-commit"]).toContain(
-      "react-doctor --staged --fail-on none || true",
+      "react-doctor --staged --fail-on warning",
     );
   });
 
@@ -589,7 +597,7 @@ describe("installReactDoctorGitHook", () => {
     expect(target.kind).toBe("git-hooks-js");
     expect(packageJson["git-hooks"]["pre-commit"]).toContain("pnpm lint");
     expect(packageJson["git-hooks"]["pre-commit"]).toContain(
-      "react-doctor --staged --fail-on none || true",
+      "react-doctor --staged --fail-on warning",
     );
   });
 
@@ -621,10 +629,9 @@ describe("installReactDoctorGitHook", () => {
       path.join(fixture.projectRoot, "package.json"),
     );
     expect(target.kind).toBe("pre-commit-npm");
-    expect(packageJson["pre-commit"]).toEqual([
-      "lint",
-      "react-doctor --staged --fail-on none || true",
-    ]);
+    expect(packageJson["pre-commit"]).toHaveLength(2);
+    expect(packageJson["pre-commit"][0]).toBe("lint");
+    expect(packageJson["pre-commit"][1]).toContain("react-doctor --staged --fail-on warning");
   });
 
   it("does not treat lint-staged as a hook manager by itself", () => {
@@ -681,7 +688,7 @@ describe("installReactDoctorGitHook", () => {
     );
     expect(target.kind).toBe("pretty-quick");
     expect(packageJson.gitHooks["pre-commit"]).toContain(
-      "react-doctor --staged --fail-on none || true",
+      "react-doctor --staged --fail-on warning",
     );
   });
 
@@ -726,7 +733,9 @@ describe("installReactDoctorGitHook", () => {
     expect(target.hookPath).toBe(
       path.join(realpathSync(fixture.projectRoot), ".githooks/pre-commit"),
     );
-    expect(readFileSync(invocationPath, "utf8")).toBe("--staged\n--fail-on\nnone\n");
+    expect(readFileSync(invocationPath, "utf8")).toBe(
+      "--staged\n--fail-on\nwarning\n",
+    );
   });
 
   it("runs the inline pre-commit hook during a real git commit", () => {
@@ -765,7 +774,9 @@ describe("installReactDoctorGitHook", () => {
       encoding: "utf8",
     });
 
-    expect(readFileSync(invocationPath, "utf8")).toBe("--staged\n--fail-on\nnone\n");
+    expect(readFileSync(invocationPath, "utf8")).toBe(
+      "--staged\n--fail-on\nwarning\n",
+    );
     expect(
       execFileSync("git", ["rev-parse", "--verify", "HEAD"], {
         cwd: fixture.projectRoot,
@@ -808,7 +819,9 @@ describe("installReactDoctorGitHook", () => {
       encoding: "utf8",
     });
 
-    expect(readFileSync(invocationPath, "utf8")).toBe("--staged\n--fail-on\nnone\n");
+    expect(readFileSync(invocationPath, "utf8")).toBe(
+      "--staged\n--fail-on\nwarning\n",
+    );
     expect(readFileSync(path.join(fixture.projectRoot, "existing-hook-ran.txt"), "utf8")).toBe(
       "existing-hook\n",
     );

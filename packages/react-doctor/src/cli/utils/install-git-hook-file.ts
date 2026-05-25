@@ -32,6 +32,9 @@ const REACT_DOCTOR_BLOCK_PATTERN = new RegExp(
 const SHEBANG = "#!/bin/sh";
 const SHEBANG_PREFIX = "#!";
 const LOCAL_REACT_DOCTOR_BIN = "./node_modules/.bin/react-doctor";
+const PNPM_REACT_DOCTOR_COMMAND = "pnpm dlx react-doctor@latest --staged --fail-on warning";
+const NPX_REACT_DOCTOR_COMMAND =
+  "npx --yes react-doctor@latest --staged --fail-on warning";
 
 const buildReactDoctorHookBlock = (): string =>
   [
@@ -48,21 +51,37 @@ const buildReactDoctorHookBlock = (): string =>
     "  fi",
     "",
     "  if command -v pnpm >/dev/null 2>&1; then",
-    "    pnpm dlx react-doctor@latest --staged --fail-on none",
+    `    ${PNPM_REACT_DOCTOR_COMMAND}`,
     "    return",
     "  fi",
     "",
     "  if command -v npx >/dev/null 2>&1; then",
-    "    npx --yes react-doctor@latest --staged --fail-on none",
+    `    ${NPX_REACT_DOCTOR_COMMAND}`,
     "    return",
     "  fi",
     "",
     "  printf '%s\\n' \"react-doctor: command not found; skipping staged scan.\"",
     "}",
     "",
-    "printf '%s\\n' \"react-doctor: scanning staged files (non-blocking).\"",
-    "if ! react_doctor_scan_staged_files; then",
-    "  printf '%s\\n' \"react-doctor: staged scan failed; commit will continue.\"",
+    "react_doctor_prompt_to_fix() {",
+    `  printf '%s\\n' "React Doctor found staged regressions." "Run ${REACT_DOCTOR_COMMAND} to inspect." >&2`,
+    "  if { exec 3<>/dev/tty; } 2>/dev/null; then",
+    "    printf '%s' \"Stop commit and fix now? [y/N] \" >&3",
+    "    read -r react_doctor_answer <&3 || react_doctor_answer=\"\"",
+    "    exec 3>&-",
+    "    case \"$react_doctor_answer\" in y|Y|yes|YES|Yes ) return 1 ;; esac",
+    "  fi",
+    "  printf '%s\\n' \"Continuing commit.\" >&2",
+    "  return 0",
+    "}",
+    "",
+    "react_doctor_output=$(mktemp \"${TMPDIR:-/tmp}/react-doctor-hook.XXXXXX\")",
+    "if react_doctor_scan_staged_files > \"$react_doctor_output\" 2>&1; then",
+    "  rm -f \"$react_doctor_output\"",
+    "else",
+    "  react_doctor_status=$?",
+    "  rm -f \"$react_doctor_output\"",
+    "  if ! react_doctor_prompt_to_fix; then exit \"$react_doctor_status\"; fi",
     "fi",
     REACT_DOCTOR_BLOCK_END,
   ].join("\n");

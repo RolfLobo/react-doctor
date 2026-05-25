@@ -12,8 +12,24 @@ export const SIMPLE_GIT_HOOKS_CONFIG_FILE = ".simple-git-hooks.cjs";
 export const LEFTHOOK_CONFIG_FILES = ["lefthook.yml", "lefthook.yaml"];
 export const PRE_COMMIT_CONFIG_FILE = ".pre-commit-config.yaml";
 export const OVERCOMMIT_CONFIG_FILE = ".overcommit.yml";
-export const REACT_DOCTOR_COMMAND = "react-doctor --staged --fail-on none";
-export const NON_BLOCKING_REACT_DOCTOR_COMMAND = `${REACT_DOCTOR_COMMAND} || true`;
+export const REACT_DOCTOR_COMMAND = "react-doctor --staged --fail-on warning";
+export const NON_BLOCKING_REACT_DOCTOR_COMMAND = [
+  'react_doctor_output=$(mktemp "${TMPDIR:-/tmp}/react-doctor-hook.XXXXXX");',
+  `if ${REACT_DOCTOR_COMMAND} > "$react_doctor_output" 2>&1; then`,
+  'rm -f "$react_doctor_output";',
+  "else",
+  "react_doctor_status=$?;",
+  'rm -f "$react_doctor_output";',
+  `printf "%s\\n" "React Doctor found staged regressions." "Run ${REACT_DOCTOR_COMMAND} to inspect." >&2;`,
+  "if { exec 3<>/dev/tty; } 2>/dev/null; then",
+  'printf "%s" "Stop commit and fix now? [y/N] " >&3;',
+  'read -r react_doctor_answer <&3 || react_doctor_answer="";',
+  "exec 3>&-;",
+  'case "$react_doctor_answer" in y|Y|yes|YES|Yes ) exit "$react_doctor_status" ;; esac;',
+  "fi;",
+  'printf "%s\\n" "Continuing commit." >&2;',
+  "fi",
+].join(" ");
 export const PACKAGE_JSON_FILE_NAME = "package.json";
 
 export const runGit = (projectRoot: string, args: ReadonlyArray<string>): string | null => {
