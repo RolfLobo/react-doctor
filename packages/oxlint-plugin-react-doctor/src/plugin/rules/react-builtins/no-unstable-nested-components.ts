@@ -1,3 +1,4 @@
+import { compileGlob } from "../../utils/compile-glob.js";
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
@@ -54,11 +55,6 @@ const resolveSettings = (
     customValidators: ruleSettings.customValidators ?? [],
     propNamePattern: ruleSettings.propNamePattern ?? "render*",
   };
-};
-
-const compileGlob = (pattern: string): RegExp => {
-  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*");
-  return new RegExp(`^${escaped}$`);
 };
 
 // Check if a function body / expression contains JSX OR a

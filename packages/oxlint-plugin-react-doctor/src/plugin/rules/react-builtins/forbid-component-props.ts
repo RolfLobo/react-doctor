@@ -1,3 +1,4 @@
+import { compileGlob } from "../../utils/compile-glob.js";
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
@@ -39,11 +40,6 @@ const resolveSettings = (
 };
 
 // Convert a glob like `Foo*` / `*Foo` / `Foo*Bar` into a RegExp.
-const compileGlob = (pattern: string): RegExp => {
-  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*");
-  return new RegExp(`^${escaped}$`);
-};
-
 interface NormalizedEntry {
   propRegex: RegExp;
   isExactProp: boolean;

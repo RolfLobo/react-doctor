@@ -1,3 +1,4 @@
+import { compileGlob } from "../../utils/compile-glob.js";
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
@@ -83,9 +84,6 @@ const resolveSettings = (
 };
 
 // Glob-match supporting `*` only.
-const compileGlob = (pattern: string): RegExp =>
-  new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`);
-
 // Mirrors OXC's `get_event_handler_name_from_static_member_expression`.
 // is_props_handler is TRUE iff the chain is exactly:
 //   - `props.<name>` (Identifier "props"), OR

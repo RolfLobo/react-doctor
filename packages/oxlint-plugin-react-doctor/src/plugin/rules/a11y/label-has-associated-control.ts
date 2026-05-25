@@ -1,3 +1,4 @@
+import { compileGlob } from "../../utils/compile-glob.js";
 import { defineRule } from "../../utils/define-rule.js";
 import { isTestlikeFilename } from "../../utils/is-testlike-filename.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
@@ -74,11 +75,6 @@ const resolveSettings = (
 };
 
 // Glob match used by OXC for `controlComponents` entries (supports `*`).
-const compileGlob = (pattern: string): RegExp => {
-  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*");
-  return new RegExp(`^${escaped}$`);
-};
-
 const isControlComponent = (tagName: string, controlComponents: ReadonlyArray<string>): boolean => {
   if (DEFAULT_CONTROL_COMPONENTS.includes(tagName)) return true;
   return controlComponents.some((pattern) => compileGlob(pattern).test(tagName));
