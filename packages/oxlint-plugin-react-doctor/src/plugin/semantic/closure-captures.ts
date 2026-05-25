@@ -1,13 +1,8 @@
+import { FUNCTION_LIKE_TYPES } from "../constants/js.js";
 import type { EsTreeNode } from "../utils/es-tree-node.js";
 import type { ReferenceDescriptor, ScopeAnalysis } from "./scope-analysis.js";
 import { isDescendantScope } from "./scope-analysis.js";
 import { isAstNode } from "../utils/is-ast-node.js";
-
-const FUNCTION_LIKE_TYPES: ReadonlySet<string> = new Set([
-  "FunctionDeclaration",
-  "FunctionExpression",
-  "ArrowFunctionExpression",
-]);
 
 const isFunctionLike = (node: EsTreeNode): boolean => FUNCTION_LIKE_TYPES.has(node.type);
 

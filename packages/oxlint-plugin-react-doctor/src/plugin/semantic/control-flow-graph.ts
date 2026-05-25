@@ -1,3 +1,4 @@
+import { FUNCTION_LIKE_TYPES } from "../constants/js.js";
 import type { EsTreeNode } from "../utils/es-tree-node.js";
 import { isAstNode } from "../utils/is-ast-node.js";
 import { isNodeOfType } from "../utils/is-node-of-type.js";
@@ -46,11 +47,6 @@ export interface ControlFlowAnalysis {
   readonly dominatesExit: (node: EsTreeNode) => boolean;
 }
 
-const FUNCTION_LIKE_TYPES: ReadonlySet<string> = new Set([
-  "FunctionDeclaration",
-  "FunctionExpression",
-  "ArrowFunctionExpression",
-]);
 
 const isFunctionLike = (node: EsTreeNode): boolean => FUNCTION_LIKE_TYPES.has(node.type);
 
