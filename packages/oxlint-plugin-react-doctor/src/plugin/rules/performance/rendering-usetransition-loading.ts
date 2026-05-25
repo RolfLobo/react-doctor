@@ -1,6 +1,7 @@
 import { LOADING_STATE_PATTERN } from "../../constants/react.js";
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
+import { isFunctionLike } from "../../utils/is-function-like.js";
 import { isHookCall } from "../../utils/is-hook-call.js";
 import type { Rule } from "../../utils/rule.js";
 import type { RuleContext } from "../../utils/rule-context.js";
@@ -30,17 +31,12 @@ const enclosingFunctionBody = (node: EsTreeNode): EsTreeNode | null => {
   return null;
 };
 
-const isFunctionLikeNode = (node: EsTreeNode): boolean =>
-  isNodeOfType(node, "FunctionDeclaration") ||
-  isNodeOfType(node, "FunctionExpression") ||
-  isNodeOfType(node, "ArrowFunctionExpression");
-
 const hasOwnAwait = (functionBody: EsTreeNode | null): boolean => {
   if (!functionBody) return false;
   let found = false;
   walkAst(functionBody, (child: EsTreeNode) => {
     if (found) return;
-    if (child !== functionBody && isFunctionLikeNode(child)) {
+    if (child !== functionBody && isFunctionLike(child)) {
       // Don't descend into nested functions — their awaits belong to
       // THEIR async context, not this one.
       return false;
@@ -80,7 +76,7 @@ const setterIsCalledInAsyncContext = (
   let found = false;
   walkAst(componentBody, (child: EsTreeNode) => {
     if (found) return;
-    if (!isFunctionLikeNode(child)) return;
+    if (!isFunctionLike(child)) return;
     const functionBody = (child as { body: EsTreeNode | null }).body;
     const isAsyncContext =
       Boolean((child as { async?: boolean }).async) || hasOwnAwait(functionBody);

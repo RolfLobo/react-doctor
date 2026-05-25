@@ -3,6 +3,7 @@ import { collectPatternNames } from "../../utils/collect-pattern-names.js";
 import { defineRule } from "../../utils/define-rule.js";
 import { getRootIdentifierName } from "../../utils/get-root-identifier-name.js";
 import { isComponentAssignment } from "../../utils/is-component-assignment.js";
+import { isFunctionLike } from "../../utils/is-function-like.js";
 import { isUppercaseName } from "../../utils/is-uppercase-name.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { Rule } from "../../utils/rule.js";
@@ -42,11 +43,6 @@ const collectFunctionLocalBindings = (functionNode: EsTreeNode): Set<string> => 
   return localBindings;
 };
 
-const isFunctionLikeNode = (node: EsTreeNode): boolean =>
-  isNodeOfType(node, "FunctionDeclaration") ||
-  isNodeOfType(node, "FunctionExpression") ||
-  isNodeOfType(node, "ArrowFunctionExpression");
-
 const walkComponentRespectingShadows = (
   node: EsTreeNode,
   shadowedStateNames: ReadonlySet<string>,
@@ -55,7 +51,7 @@ const walkComponentRespectingShadows = (
   if (!node || typeof node !== "object") return;
 
   let nextShadowedStateNames = shadowedStateNames;
-  if (isFunctionLikeNode(node)) {
+  if (isFunctionLike(node)) {
     const localBindings = collectFunctionLocalBindings(node);
     if (localBindings.size > 0) {
       const merged = new Set(shadowedStateNames);

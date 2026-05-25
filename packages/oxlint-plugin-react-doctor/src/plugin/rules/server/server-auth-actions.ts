@@ -8,6 +8,7 @@ import { defineRule } from "../../utils/define-rule.js";
 import { getReactDoctorStringArraySetting } from "../../utils/get-react-doctor-setting.js";
 import { hasDirective } from "../../utils/has-directive.js";
 import { hasUseServerDirective } from "../../utils/has-use-server-directive.js";
+import { isFunctionLike } from "../../utils/is-function-like.js";
 import { walkAst } from "../../utils/walk-ast.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { Rule } from "../../utils/rule.js";
@@ -104,11 +105,6 @@ const getAuthCallName = (
   return null;
 };
 
-const isFunctionLikeNode = (node: EsTreeNode): boolean =>
-  isNodeOfType(node, "FunctionDeclaration") ||
-  isNodeOfType(node, "FunctionExpression") ||
-  isNodeOfType(node, "ArrowFunctionExpression");
-
 const containsAuthCheck = (
   rootNodes: EsTreeNode[],
   allowedFunctionNames: ReadonlySet<string>,
@@ -125,7 +121,7 @@ const containsAuthCheck = (
       // covers a hoisted-helper top-level statement (a
       // FunctionDeclaration as a root) — we don't want its inner
       // `auth()` to count either.
-      if (isFunctionLikeNode(child)) return false;
+      if (isFunctionLike(child)) return false;
       if (!isNodeOfType(child, "CallExpression")) return;
       if (getAuthCallName(child, allowedFunctionNames, genericMethodNames)) {
         foundAuthCall = true;
