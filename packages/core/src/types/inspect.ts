@@ -20,10 +20,34 @@ export interface InspectResult {
   elapsedMilliseconds: number;
 }
 
+/**
+ * Options accepted by `inspect()`. Mixes two concern groups; ordered
+ * here in the source to make the split visible to future readers:
+ *
+ *   - **Engine inputs** (`lint`, `deadCode`, `includePaths`,
+ *     `configOverride`, `respectInlineDisables`) — flow into
+ *     `runInspect`'s `InspectInput` and shape what the engine
+ *     actually does.
+ *   - **Rendering / orchestration knobs** (`scoreOnly`, `noScore`,
+ *     `silent`, `verbose`, `outputSurface`, `isCi`) — consumed by
+ *     the public-API shell to decide what to print, which surface
+ *     to filter for, and whether to mark the run as CI-originated.
+ *
+ * A full type split was investigated as the plan's T4 follow-up but
+ * deferred — every call site builds the union anyway, so the gain
+ * was purely documentary. Grouping the fields here captures the
+ * same intent without churning a published-API type.
+ */
 export interface InspectOptions {
+  // ── Engine inputs ────────────────────────────────────────────────
   lint?: boolean;
   /** See `ReactDoctorConfig.deadCode`. Ignored in diff / staged mode. */
   deadCode?: boolean;
+  includePaths?: string[];
+  configOverride?: ReactDoctorConfig | null;
+  respectInlineDisables?: boolean;
+
+  // ── Rendering / orchestration knobs ──────────────────────────────
   verbose?: boolean;
   scoreOnly?: boolean;
   noScore?: boolean;
@@ -33,9 +57,6 @@ export interface InspectOptions {
    */
   isCi?: boolean;
   silent?: boolean;
-  includePaths?: string[];
-  configOverride?: ReactDoctorConfig | null;
-  respectInlineDisables?: boolean;
   /**
    * Surface that consumes the printed diagnostic output (terminal
    * summary + per-rule list). Defaults to `"cli"`, which shows every
