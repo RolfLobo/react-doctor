@@ -13,6 +13,7 @@ import { isAstNode } from "../../utils/is-ast-node.js";
 import { isReactComponentOrHookName } from "../../utils/is-react-component-or-hook-name.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import type { Rule } from "../../utils/rule.js";
+import { REACT_HOC_NAMES } from "../../constants/react.js";
 import {
   getHookName,
   isOutsideAllFunctions,
@@ -100,13 +101,6 @@ const getCallExpressionCalleeName = (
   }
   return null;
 };
-
-const REACT_HOC_NAMES: ReadonlySet<string> = new Set([
-  "forwardRef",
-  "memo",
-  "React.forwardRef",
-  "React.memo",
-]);
 
 const inferFunctionName = (functionNode: EsTreeNode): string | null => {
   if (

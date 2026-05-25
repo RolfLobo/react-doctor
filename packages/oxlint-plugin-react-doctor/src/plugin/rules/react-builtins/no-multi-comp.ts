@@ -10,6 +10,7 @@ import { isTestlikeFilename } from "../../utils/is-testlike-filename.js";
 import type { Rule } from "../../utils/rule.js";
 import type { ScopeAnalysis, SymbolDescriptor } from "../../semantic/scope-analysis.js";
 import { stripParenExpression } from "../../utils/strip-paren-expression.js";
+import { REACT_HOC_NAMES } from "../../constants/react.js";
 
 const buildMessage = (componentName: string): string =>
   `Declare only one React component per file. Found extra component: ${componentName}.`;
@@ -28,13 +29,6 @@ const resolveSettings = (
       : {};
   return { ignoreStateless: ruleSettings.ignoreStateless ?? false };
 };
-
-const HOC_NAMES: ReadonlySet<string> = new Set([
-  "memo",
-  "forwardRef",
-  "React.memo",
-  "React.forwardRef",
-]);
 
 const flattenCalleeName = (callee: EsTreeNode): string | null => {
   if (isNodeOfType(callee, "Identifier")) return callee.name;
@@ -58,7 +52,7 @@ const flattenCalleeName = (callee: EsTreeNode): string | null => {
 const isHocCall = (call: EsTreeNode, scopes: ScopeAnalysis): boolean => {
   if (!isNodeOfType(call, "CallExpression")) return false;
   const calleeName = flattenCalleeName(call.callee);
-  if (calleeName && HOC_NAMES.has(calleeName)) return true;
+  if (calleeName && REACT_HOC_NAMES.has(calleeName)) return true;
   // Try scope-resolved alias: if callee is an Identifier, look up its
   // binding's initializer.
   if (!isNodeOfType(call.callee, "Identifier")) return false;
@@ -74,7 +68,7 @@ const isHocCall = (call: EsTreeNode, scopes: ScopeAnalysis): boolean => {
 //   const memo = require('react').memo;
 //   import { memo } from 'react';        (kind = "import")
 const symbolMapsToHoc = (symbol: SymbolDescriptor): boolean => {
-  if (HOC_NAMES.has(symbol.name)) {
+  if (REACT_HOC_NAMES.has(symbol.name)) {
     // Direct shadowing or unchanged name. Verify it's an import or
     // points to the React namespace via initializer.
     if (symbol.kind === "import") return true;
@@ -83,15 +77,19 @@ const symbolMapsToHoc = (symbol: SymbolDescriptor): boolean => {
   if (!init) return false;
   if (isNodeOfType(init, "MemberExpression")) {
     const flat = flattenCalleeName(init);
-    if (flat && HOC_NAMES.has(flat)) return true;
+    if (flat && REACT_HOC_NAMES.has(flat)) return true;
   }
-  if (isNodeOfType(init, "Identifier") && HOC_NAMES.has(init.name)) {
+  if (isNodeOfType(init, "Identifier") && REACT_HOC_NAMES.has(init.name)) {
     return true;
   }
   // Destructuring: `const { memo } = React` makes the symbol's
   // initializer the `React` Identifier (per find-variable-initializer
   // semantics) — accept that as long as the symbol's NAME is a HoC.
-  if (HOC_NAMES.has(symbol.name) && isNodeOfType(init, "Identifier") && init.name === "React") {
+  if (
+    REACT_HOC_NAMES.has(symbol.name) &&
+    isNodeOfType(init, "Identifier") &&
+    init.name === "React"
+  ) {
     return true;
   }
   return false;

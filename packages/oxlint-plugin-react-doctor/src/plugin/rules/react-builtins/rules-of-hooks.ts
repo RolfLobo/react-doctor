@@ -5,6 +5,7 @@ import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import { isReactComponentOrHookName } from "../../utils/is-react-component-or-hook-name.js";
 import { isReactHookName } from "../../utils/is-react-hook-name.js";
+import { REACT_HOC_NAMES } from "../../constants/react.js";
 import type { Rule } from "../../utils/rule.js";
 
 // Port of `oxc_linter::rules::react::rules_of_hooks`. Enforces React's
@@ -349,13 +350,6 @@ interface FunctionInfo {
   isAsync: boolean;
   isComponentOrHook: boolean;
 }
-
-const REACT_HOC_NAMES: ReadonlySet<string> = new Set([
-  "memo",
-  "forwardRef",
-  "React.memo",
-  "React.forwardRef",
-]);
 
 const getCallExpressionCalleeName = (
   callExpression: EsTreeNodeOfType<"CallExpression">,

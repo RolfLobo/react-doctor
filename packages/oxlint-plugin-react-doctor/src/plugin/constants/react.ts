@@ -55,6 +55,21 @@ export const REACT_HANDLER_PROP_PATTERN = /^on[A-Z]/;
 export const EFFECT_HOOK_NAMES = new Set(["useEffect", "useLayoutEffect"]);
 export const HOOKS_WITH_DEPS = new Set(["useEffect", "useLayoutEffect", "useMemo", "useCallback"]);
 
+// React's two component-wrapping HOCs that the rule visitor needs to
+// "see through" — `memo(Comp)` and `forwardRef(Comp)`. Both forms
+// (`memo` from a named import + `React.memo` via the namespace) are
+// included so the chain root resolves uniformly regardless of how
+// the consumer imports React. Source of truth for the
+// `exhaustive-deps`, `rules-of-hooks`, and `no-multi-comp` rule
+// detectors which were all maintaining their own identical copy of
+// this set.
+export const REACT_HOC_NAMES = new Set([
+  "memo",
+  "forwardRef",
+  "React.memo",
+  "React.forwardRef",
+]);
+
 // Subscription-shaped method names recognized by `prefer-use-sync-external-store`.
 // Covers the canonical `store.subscribe`, the browser `addEventListener` /
 // `addListener`, the EventEmitter `on` / `watch` / `listen`, and shorter
