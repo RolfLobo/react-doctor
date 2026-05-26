@@ -19,13 +19,12 @@ import {
   type ResolvedScanTarget,
 } from "@react-doctor/core";
 import type {
-  DiagnoseModulesOptions,
-  DiagnoseModulesResult,
   DiagnoseOptions,
+  DiagnoseProjectsInput,
+  DiagnoseProjectsResult,
   DiagnoseResult,
-  ModuleDefinition,
-  ModuleError,
-  ModuleResult,
+  ProjectDefinition,
+  ProjectResult,
   ReactDoctorConfig,
   ScoreResult,
 } from "@react-doctor/core";
@@ -132,136 +131,127 @@ export const diagnose = async (
   return outputToDiagnoseResult(output, globalThis.performance.now() - startTime);
 };
 
-const findWorstScore = (moduleResults: ModuleResult[]): ScoreResult | null => {
+const findWorstScore = (projectResults: ProjectResult[]): ScoreResult | null => {
   let worstResult: ScoreResult | null = null;
   let worstScore = Number.POSITIVE_INFINITY;
-  for (const moduleResult of moduleResults) {
-    if (moduleResult.score === null) continue;
-    if (moduleResult.score.score < worstScore) {
-      worstScore = moduleResult.score.score;
-      worstResult = moduleResult.score;
+  for (const projectResult of projectResults) {
+    if (!projectResult.ok || projectResult.score === null) continue;
+    if (projectResult.score.score < worstScore) {
+      worstScore = projectResult.score.score;
+      worstResult = projectResult.score;
     }
   }
   return worstResult;
 };
 
-const diagnoseModule = async (
-  moduleDefinition: ModuleDefinition,
+const diagnoseProject = async (
+  projectDefinition: ProjectDefinition,
   baseOptions: DiagnoseOptions,
-): Promise<ModuleResult> => {
+): Promise<ProjectResult> => {
   const startTime = globalThis.performance.now();
-  const scanTarget = resolveScanTarget(moduleDefinition.directory);
-  const { reactDoctorConfig: configOverride, ...perModuleOptions } =
-    moduleDefinition.config ?? {};
-  const mergedOptions: DiagnoseOptions = { ...baseOptions, ...perModuleOptions };
 
-  const program = buildInspectProgram(scanTarget, mergedOptions, configOverride);
+  try {
+    const scanTarget = resolveScanTarget(projectDefinition.directory);
+    const { directory: _, config: configOverride, ...perProjectOptions } = projectDefinition;
+    const mergedOptions: DiagnoseOptions = { ...baseOptions, ...perProjectOptions };
 
-  const layer =
-    configOverride !== undefined
-      ? buildLayerWithConfigOverride(configOverride, scanTarget.resolvedDirectory)
-      : DEFAULT_LAYER;
+    const program = buildInspectProgram(scanTarget, mergedOptions, configOverride);
 
-  const output: InspectOutput = await Effect.runPromise(
-    restoreLegacyThrow(
-      program.pipe(Effect.provide(layer), Effect.provide(layerOtlp)),
-    ),
-  );
+    const layer =
+      configOverride !== undefined
+        ? buildLayerWithConfigOverride(configOverride, scanTarget.resolvedDirectory)
+        : DEFAULT_LAYER;
 
-  return {
-    ...outputToDiagnoseResult(output, globalThis.performance.now() - startTime),
-    directory: scanTarget.resolvedDirectory,
-  };
+    const output: InspectOutput = await Effect.runPromise(
+      restoreLegacyThrow(
+        program.pipe(Effect.provide(layer), Effect.provide(layerOtlp)),
+      ),
+    );
+
+    return {
+      ok: true,
+      ...outputToDiagnoseResult(output, globalThis.performance.now() - startTime),
+      directory: scanTarget.resolvedDirectory,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      directory: projectDefinition.directory,
+      error: error instanceof Error ? error : new Error(String(error)),
+    };
+  }
 };
 
 /**
- * Scan multiple modules in parallel and return per-module scores,
- * diagnostics, and an aggregate score (worst-of across all modules).
+ * Scan multiple projects in parallel and return per-project scores,
+ * diagnostics, and an aggregate score (worst-of across all projects).
  *
- * Each module runs its own independent `runInspect` pipeline — the
- * same pipeline `diagnose()` uses — so per-module config overrides,
+ * Each project runs its own independent `runInspect` pipeline — the
+ * same pipeline `diagnose()` uses — so per-project config overrides,
  * dead-code analysis, and scoring all work identically to a single
  * `diagnose()` call.
  *
- * Modules that fail (e.g. missing `package.json`, no React dependency)
- * are collected in `result.errors` rather than aborting the entire
- * batch, so callers always receive partial results from the modules
- * that succeeded.
+ * Projects that fail (e.g. missing `package.json`, no React dependency)
+ * are included in the result with `ok: false` rather than aborting the
+ * entire batch, so callers always receive partial results.
  *
  * ```ts
- * const result = await diagnoseModules([
- *   { directory: "packages/app" },
- *   { directory: "packages/shared", config: { deadCode: false } },
- *   { directory: "packages/admin", config: {
- *     reactDoctorConfig: { rules: { "react-doctor/no-array-index-as-key": "off" } },
- *   }},
- * ], { concurrency: 4 });
+ * const result = await diagnoseProjects({
+ *   projects: [
+ *     { directory: "packages/app" },
+ *     { directory: "packages/shared", deadCode: false },
+ *     { directory: "packages/admin", config: {
+ *       rules: { "react-doctor/no-array-index-as-key": "off" },
+ *     }},
+ *   ],
+ *   concurrency: 4,
+ * });
  *
- * for (const mod of result.modules) {
- *   console.log(mod.directory, mod.score);
+ * for (const project of result.projects) {
+ *   if (project.ok) {
+ *     console.log(project.directory, project.score);
+ *   } else {
+ *     console.error(project.directory, project.error);
+ *   }
  * }
  * ```
  */
-export const diagnoseModules = async (
-  modules: ModuleDefinition[],
-  options: DiagnoseModulesOptions = {},
-): Promise<DiagnoseModulesResult> => {
+export const diagnoseProjects = async (
+  input: DiagnoseProjectsInput,
+): Promise<DiagnoseProjectsResult> => {
   const startTime = globalThis.performance.now();
-  const { concurrency: rawConcurrency, ...baseOptions } = options;
-  const concurrency = Math.max(1, rawConcurrency ?? modules.length);
+  const { projects, concurrency: rawConcurrency, ...baseOptions } = input;
+  const concurrency = Math.max(1, rawConcurrency ?? projects.length);
 
-  const moduleResults: ModuleResult[] = [];
-  const moduleErrors: ModuleError[] = [];
-  const pendingModules = [...modules];
+  const projectResults: ProjectResult[] = [];
+  const pendingProjects = [...projects];
 
   const runBatch = async (): Promise<void> => {
-    const batch: Promise<
-      | { ok: true; result: ModuleResult }
-      | { ok: false; directory: string; error: Error }
-    >[] = [];
+    const batch: Promise<ProjectResult>[] = [];
 
-    while (pendingModules.length > 0 && batch.length < concurrency) {
-      const moduleDefinition = pendingModules.shift()!;
-      batch.push(
-        diagnoseModule(moduleDefinition, baseOptions).then(
-          (result) => ({ ok: true as const, result }),
-          (error: unknown) => ({
-            ok: false as const,
-            directory: moduleDefinition.directory,
-            error: error instanceof Error ? error : new Error(String(error)),
-          }),
-        ),
-      );
+    while (pendingProjects.length > 0 && batch.length < concurrency) {
+      const projectDefinition = pendingProjects.shift()!;
+      batch.push(diagnoseProject(projectDefinition, baseOptions));
     }
 
-    const settled = await Promise.all(batch);
-    for (const outcome of settled) {
-      if (outcome.ok) {
-        moduleResults.push(outcome.result);
-      } else {
-        moduleErrors.push({
-          directory: outcome.directory,
-          error: outcome.error,
-        });
-      }
-    }
+    const batchResults = await Promise.all(batch);
+    projectResults.push(...batchResults);
 
-    if (pendingModules.length > 0) {
+    if (pendingProjects.length > 0) {
       await runBatch();
     }
   };
 
   await runBatch();
 
-  const allDiagnostics = moduleResults.flatMap(
-    (moduleResult) => moduleResult.diagnostics,
+  const allDiagnostics = projectResults.flatMap((projectResult) =>
+    projectResult.ok ? projectResult.diagnostics : [],
   );
 
   return {
-    modules: moduleResults,
-    errors: moduleErrors,
+    projects: projectResults,
     diagnostics: allDiagnostics,
-    score: findWorstScore(moduleResults),
+    score: findWorstScore(projectResults),
     elapsedMilliseconds: globalThis.performance.now() - startTime,
   };
 };

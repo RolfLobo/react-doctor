@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 import {
   diagnose,
-  diagnoseModules,
+  diagnoseProjects,
   NoReactDependencyError,
   ProjectNotFoundError,
 } from "../src/index.js";
@@ -67,146 +67,156 @@ describe("diagnose", () => {
   });
 });
 
-describe("diagnoseModules", () => {
-  it("returns per-module results for multiple directories", async () => {
-    const result = await diagnoseModules(
-      [
+describe("diagnoseProjects", () => {
+  it("returns per-project results for multiple directories", async () => {
+    const result = await diagnoseProjects({
+      projects: [
         { directory: path.join(FIXTURES_DIRECTORY, "basic-react") },
         { directory: path.join(FIXTURES_DIRECTORY, "nextjs-app") },
       ],
-      { deadCode: false, lint: false },
-    );
+      deadCode: false,
+      lint: false,
+    });
 
-    expect(result.modules).toHaveLength(2);
+    expect(result.projects).toHaveLength(2);
     expect(result).toHaveProperty("diagnostics");
     expect(result).toHaveProperty("score");
     expect(result).toHaveProperty("elapsedMilliseconds");
     expect(Array.isArray(result.diagnostics)).toBe(true);
 
-    for (const moduleResult of result.modules) {
-      expect(moduleResult).toHaveProperty("directory");
-      expect(moduleResult).toHaveProperty("diagnostics");
-      expect(moduleResult).toHaveProperty("score");
-      expect(moduleResult).toHaveProperty("project");
-      expect(moduleResult).toHaveProperty("skippedChecks");
-      expect(moduleResult).toHaveProperty("elapsedMilliseconds");
+    for (const projectResult of result.projects) {
+      expect(projectResult.ok).toBe(true);
+      if (!projectResult.ok) continue;
+      expect(projectResult).toHaveProperty("directory");
+      expect(projectResult).toHaveProperty("diagnostics");
+      expect(projectResult).toHaveProperty("score");
+      expect(projectResult).toHaveProperty("project");
+      expect(projectResult).toHaveProperty("skippedChecks");
+      expect(projectResult).toHaveProperty("elapsedMilliseconds");
     }
   });
 
-  it("flattens diagnostics across all modules", async () => {
-    const result = await diagnoseModules(
-      [
+  it("flattens diagnostics across all succeeded projects", async () => {
+    const result = await diagnoseProjects({
+      projects: [
         { directory: path.join(FIXTURES_DIRECTORY, "basic-react") },
         { directory: path.join(FIXTURES_DIRECTORY, "nextjs-app") },
       ],
-      { deadCode: false, lint: false },
-    );
+      deadCode: false,
+      lint: false,
+    });
 
-    const expectedTotal = result.modules.reduce(
-      (sum, moduleResult) => sum + moduleResult.diagnostics.length,
+    const expectedTotal = result.projects.reduce(
+      (sum, projectResult) => sum + (projectResult.ok ? projectResult.diagnostics.length : 0),
       0,
     );
     expect(result.diagnostics).toHaveLength(expectedTotal);
   });
 
-  it("supports per-module config overrides", async () => {
-    const result = await diagnoseModules(
-      [
-        { directory: path.join(FIXTURES_DIRECTORY, "basic-react"), config: { deadCode: false } },
-        { directory: path.join(FIXTURES_DIRECTORY, "nextjs-app"), config: { deadCode: false } },
+  it("supports per-project scan option overrides", async () => {
+    const result = await diagnoseProjects({
+      projects: [
+        { directory: path.join(FIXTURES_DIRECTORY, "basic-react"), deadCode: false },
+        { directory: path.join(FIXTURES_DIRECTORY, "nextjs-app"), deadCode: false },
       ],
-      { lint: false },
-    );
+      lint: false,
+    });
 
-    expect(result.modules).toHaveLength(2);
-    for (const moduleResult of result.modules) {
-      expect(moduleResult.skippedChecks).not.toContain("dead-code");
+    expect(result.projects).toHaveLength(2);
+    for (const projectResult of result.projects) {
+      expect(projectResult.ok).toBe(true);
+      if (!projectResult.ok) continue;
+      expect(projectResult.skippedChecks).not.toContain("dead-code");
     }
   });
 
   it("respects concurrency: 1 for sequential execution", async () => {
-    const result = await diagnoseModules(
-      [
+    const result = await diagnoseProjects({
+      projects: [
         { directory: path.join(FIXTURES_DIRECTORY, "basic-react") },
         { directory: path.join(FIXTURES_DIRECTORY, "nextjs-app") },
       ],
-      { deadCode: false, lint: false, concurrency: 1 },
-    );
+      deadCode: false,
+      lint: false,
+      concurrency: 1,
+    });
 
-    expect(result.modules).toHaveLength(2);
+    expect(result.projects).toHaveLength(2);
     expect(result.elapsedMilliseconds).toBeGreaterThanOrEqual(0);
   });
 
-  it("handles a single module identically to diagnose()", async () => {
-    const singleModuleResult = await diagnoseModules(
-      [{ directory: path.join(FIXTURES_DIRECTORY, "basic-react") }],
-      { deadCode: false, lint: false },
-    );
+  it("handles a single project identically to diagnose()", async () => {
+    const multiResult = await diagnoseProjects({
+      projects: [{ directory: path.join(FIXTURES_DIRECTORY, "basic-react") }],
+      deadCode: false,
+      lint: false,
+    });
     const directResult = await diagnose(path.join(FIXTURES_DIRECTORY, "basic-react"), {
       deadCode: false,
       lint: false,
     });
 
-    expect(singleModuleResult.modules).toHaveLength(1);
-    expect(singleModuleResult.errors).toHaveLength(0);
-    expect(singleModuleResult.modules[0].project.reactMajorVersion).toBe(
-      directResult.project.reactMajorVersion,
-    );
-    expect(singleModuleResult.modules[0].project.projectName).toBe(
-      directResult.project.projectName,
-    );
+    expect(multiResult.projects).toHaveLength(1);
+    const firstProject = multiResult.projects[0];
+    expect(firstProject.ok).toBe(true);
+    if (!firstProject.ok) return;
+    expect(firstProject.project.reactMajorVersion).toBe(directResult.project.reactMajorVersion);
+    expect(firstProject.project.projectName).toBe(directResult.project.projectName);
   });
 
-  it("collects failing modules into errors without aborting the batch", async () => {
-    const result = await diagnoseModules(
-      [
+  it("collects failing projects with ok: false without aborting the batch", async () => {
+    const result = await diagnoseProjects({
+      projects: [
         { directory: path.join(FIXTURES_DIRECTORY, "basic-react") },
         { directory: noReactTempDirectory },
       ],
-      { deadCode: false, lint: false },
-    );
+      deadCode: false,
+      lint: false,
+    });
 
-    expect(result.modules).toHaveLength(1);
-    expect(result.modules[0].project.projectName).toBe("test-basic-react");
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].directory).toBe(noReactTempDirectory);
-    expect(result.errors[0].error).toBeInstanceOf(Error);
+    const succeeded = result.projects.filter((projectResult) => projectResult.ok);
+    const failed = result.projects.filter((projectResult) => !projectResult.ok);
+
+    expect(succeeded).toHaveLength(1);
+    expect(succeeded[0].ok && succeeded[0].project.projectName).toBe("test-basic-react");
+    expect(failed).toHaveLength(1);
+    expect(failed[0].directory).toBe(noReactTempDirectory);
+    expect(!failed[0].ok && failed[0].error).toBeInstanceOf(Error);
   });
 
-  it("returns empty results for an empty modules array", async () => {
-    const result = await diagnoseModules([], { deadCode: false, lint: false });
+  it("returns empty results for an empty projects array", async () => {
+    const result = await diagnoseProjects({ projects: [], deadCode: false, lint: false });
 
-    expect(result.modules).toHaveLength(0);
-    expect(result.errors).toHaveLength(0);
+    expect(result.projects).toHaveLength(0);
     expect(result.diagnostics).toHaveLength(0);
     expect(result.score).toBeNull();
     expect(result.elapsedMilliseconds).toBeGreaterThanOrEqual(0);
   });
 
   it("clamps concurrency: 0 to 1 without hanging", async () => {
-    const result = await diagnoseModules(
-      [{ directory: path.join(FIXTURES_DIRECTORY, "basic-react") }],
-      { deadCode: false, lint: false, concurrency: 0 },
-    );
+    const result = await diagnoseProjects({
+      projects: [{ directory: path.join(FIXTURES_DIRECTORY, "basic-react") }],
+      deadCode: false,
+      lint: false,
+      concurrency: 0,
+    });
 
-    expect(result.modules).toHaveLength(1);
+    expect(result.projects).toHaveLength(1);
   });
 
-  it("accepts per-module reactDoctorConfig override", async () => {
-    const result = await diagnoseModules(
-      [
+  it("accepts per-project ReactDoctorConfig override", async () => {
+    const result = await diagnoseProjects({
+      projects: [
         {
           directory: path.join(FIXTURES_DIRECTORY, "basic-react"),
-          config: {
-            deadCode: false,
-            reactDoctorConfig: { ignore: { tags: ["design"] } },
-          },
+          deadCode: false,
+          config: { ignore: { tags: ["design"] } },
         },
       ],
-      { lint: false },
-    );
+      lint: false,
+    });
 
-    expect(result.modules).toHaveLength(1);
-    expect(result.errors).toHaveLength(0);
+    expect(result.projects).toHaveLength(1);
+    expect(result.projects[0].ok).toBe(true);
   });
 });

@@ -32,52 +32,48 @@ export interface DiagnoseResult {
 }
 
 /**
- * A single module (directory) to scan as part of a `diagnoseModules()`
- * batch. Per-module `config` overrides layer on top of the global
- * `DiagnoseModulesOptions` — omitted fields fall through to the global
- * defaults, and per-module `ReactDoctorConfig` overrides take
- * precedence over any on-disk config file found in the module
- * directory.
+ * A single project to scan as part of a `diagnoseProjects()` batch.
+ * Scan options (`deadCode`, `lint`, etc.) are flat on the entry and
+ * layer on top of the global defaults — omitted fields fall through.
+ * `config` is a full `ReactDoctorConfig` override that replaces the
+ * on-disk `react-doctor.config.json` for this project's scan.
  */
-export interface ModuleDefinition {
+export interface ProjectDefinition extends DiagnoseOptions {
   directory: string;
-  config?: DiagnoseOptions & {
-    /**
-     * Full react-doctor config override for this module. When provided,
-     * replaces the on-disk `react-doctor.config.json` for this module's
-     * scan — the scan target resolver still runs (so `rootDir` and
-     * subproject discovery work), but its loaded config is swapped out.
-     */
-    reactDoctorConfig?: ReactDoctorConfig;
-  };
+  /**
+   * Full react-doctor config override for this project. When provided,
+   * replaces the on-disk `react-doctor.config.json` for this project's
+   * scan — the scan target resolver still runs (so `rootDir` and
+   * subproject discovery work), but its loaded config is swapped out.
+   */
+  config?: ReactDoctorConfig;
 }
 
-export interface ModuleResult extends DiagnoseResult {
+export interface ProjectResultOk extends DiagnoseResult {
+  ok: true;
   directory: string;
 }
 
-export interface ModuleError {
+export interface ProjectResultError {
+  ok: false;
   directory: string;
   error: Error;
 }
 
-export interface DiagnoseModulesOptions extends DiagnoseOptions {
+export type ProjectResult = ProjectResultOk | ProjectResultError;
+
+export interface DiagnoseProjectsInput extends DiagnoseOptions {
+  projects: ProjectDefinition[];
   /**
-   * Maximum number of modules to scan concurrently. Defaults to the
-   * number of modules (fully parallel). Set to `1` for sequential
+   * Maximum number of projects to scan concurrently. Defaults to the
+   * number of projects (fully parallel). Set to `1` for sequential
    * execution. Values below 1 are clamped to 1.
    */
   concurrency?: number;
 }
 
-export interface DiagnoseModulesResult {
-  modules: ModuleResult[];
-  /**
-   * Modules whose scans failed (e.g. `NoReactDependencyError`,
-   * `ProjectNotFoundError`). Succeeded modules are in `modules`;
-   * failed ones land here so callers always receive partial results.
-   */
-  errors: ModuleError[];
+export interface DiagnoseProjectsResult {
+  projects: ProjectResult[];
   diagnostics: Diagnostic[];
   score: ScoreResult | null;
   elapsedMilliseconds: number;

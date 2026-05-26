@@ -8,13 +8,14 @@ export type {
   SurfaceControls,
 } from "./config.js";
 export type {
-  DiagnoseModulesOptions,
-  DiagnoseModulesResult,
   DiagnoseOptions,
+  DiagnoseProjectsInput,
+  DiagnoseProjectsResult,
   DiagnoseResult,
-  ModuleDefinition,
-  ModuleError,
-  ModuleResult,
+  ProjectDefinition,
+  ProjectResult,
+  ProjectResultError,
+  ProjectResultOk,
 } from "./diagnose.js";
 export type { CleanedDiagnostic, Diagnostic, OxlintOutput } from "./diagnostic.js";
 export type { HandleErrorOptions } from "./handle-error.js";
