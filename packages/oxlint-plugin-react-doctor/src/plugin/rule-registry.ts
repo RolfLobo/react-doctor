@@ -246,6 +246,7 @@ import { rnAnimationReactionAsDerived } from "./rules/react-native/rn-animation-
 import { rnBottomSheetPreferNative } from "./rules/react-native/rn-bottom-sheet-prefer-native.js";
 import { rnListCallbackPerRow } from "./rules/react-native/rn-list-callback-per-row.js";
 import { rnListDataMapped } from "./rules/react-native/rn-list-data-mapped.js";
+import { rnListMissingEstimatedItemSize } from "./rules/react-native/rn-list-missing-estimated-item-size.js";
 import { rnListRecyclableWithoutTypes } from "./rules/react-native/rn-list-recyclable-without-types.js";
 import { rnNoDeprecatedModules } from "./rules/react-native/rn-no-deprecated-modules.js";
 import { rnNoDimensionsGet } from "./rules/react-native/rn-no-dimensions-get.js";
@@ -263,9 +264,11 @@ import { rnNoSingleElementStyleArray } from "./rules/react-native/rn-no-single-e
 import { rnPreferContentInsetAdjustment } from "./rules/react-native/rn-prefer-content-inset-adjustment.js";
 import { rnPreferExpoImage } from "./rules/react-native/rn-prefer-expo-image.js";
 import { rnPreferPressable } from "./rules/react-native/rn-prefer-pressable.js";
+import { rnPreferPressableOverGestureDetector } from "./rules/react-native/rn-prefer-pressable-over-gesture-detector.js";
 import { rnPreferReanimated } from "./rules/react-native/rn-prefer-reanimated.js";
 import { rnPressableSharedValueMutation } from "./rules/react-native/rn-pressable-shared-value-mutation.js";
 import { rnScrollviewDynamicPadding } from "./rules/react-native/rn-scrollview-dynamic-padding.js";
+import { rnScrollviewFlexInContentContainer } from "./rules/react-native/rn-scrollview-flex-in-content-container.js";
 import { rnStylePreferBoxShadow } from "./rules/react-native/rn-style-prefer-box-shadow.js";
 import { roleHasRequiredAriaProps } from "./rules/a11y/role-has-required-aria-props.js";
 import { roleSupportsAriaProps } from "./rules/a11y/role-supports-aria-props.js";
@@ -2925,6 +2928,18 @@ export const reactDoctorRules = [
     },
   },
   {
+    key: "react-doctor/rn-list-missing-estimated-item-size",
+    id: "rn-list-missing-estimated-item-size",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...rnListMissingEstimatedItemSize,
+      framework: "react-native",
+      category: "React Native",
+      tags: [...new Set(["react-native", ...(rnListMissingEstimatedItemSize.tags ?? [])])],
+    },
+  },
+  {
     key: "react-doctor/rn-list-recyclable-without-types",
     id: "rn-list-recyclable-without-types",
     source: "react-doctor",
@@ -3129,6 +3144,18 @@ export const reactDoctorRules = [
     },
   },
   {
+    key: "react-doctor/rn-prefer-pressable-over-gesture-detector",
+    id: "rn-prefer-pressable-over-gesture-detector",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...rnPreferPressableOverGestureDetector,
+      framework: "react-native",
+      category: "React Native",
+      tags: [...new Set(["react-native", ...(rnPreferPressableOverGestureDetector.tags ?? [])])],
+    },
+  },
+  {
     key: "react-doctor/rn-prefer-reanimated",
     id: "rn-prefer-reanimated",
     source: "react-doctor",
@@ -3162,6 +3189,18 @@ export const reactDoctorRules = [
       framework: "react-native",
       category: "React Native",
       tags: [...new Set(["react-native", ...(rnScrollviewDynamicPadding.tags ?? [])])],
+    },
+  },
+  {
+    key: "react-doctor/rn-scrollview-flex-in-content-container",
+    id: "rn-scrollview-flex-in-content-container",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...rnScrollviewFlexInContentContainer,
+      framework: "react-native",
+      category: "React Native",
+      tags: [...new Set(["react-native", ...(rnScrollviewFlexInContentContainer.tags ?? [])])],
     },
   },
   {
