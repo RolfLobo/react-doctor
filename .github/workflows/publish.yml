@@ -26,7 +26,8 @@ jobs:
         with:
           node-version: 22.18.0
           cache: pnpm
-          registry-url: "https://registry.npmjs.org"
+
+      - run: npm install -g npm@latest
 
       - run: pnpm install --frozen-lockfile
 
