@@ -44,7 +44,11 @@ import { forbidElements } from "./rules/react-builtins/forbid-elements.js";
 import { forwardRefUsesRef } from "./rules/react-builtins/forward-ref-uses-ref.js";
 import { headingHasContent } from "./rules/a11y/heading-has-content.js";
 import { hookUseState } from "./rules/react-builtins/hook-use-state.js";
+import { hooksNoNanInDeps } from "./rules/state-and-effects/hooks-no-nan-in-deps.js";
 import { htmlHasLang } from "./rules/a11y/html-has-lang.js";
+import { htmlNoInvalidParagraphChild } from "./rules/correctness/html-no-invalid-paragraph-child.js";
+import { htmlNoInvalidTableNesting } from "./rules/correctness/html-no-invalid-table-nesting.js";
+import { htmlNoNestedInteractive } from "./rules/correctness/html-no-nested-interactive.js";
 import { iframeHasTitle } from "./rules/a11y/iframe-has-title.js";
 import { iframeMissingSandbox } from "./rules/react-builtins/iframe-missing-sandbox.js";
 import { imgRedundantAlt } from "./rules/a11y/img-redundant-alt.js";
@@ -210,9 +214,15 @@ import { noWideLetterSpacing } from "./rules/design/no-wide-letter-spacing.js";
 import { noWillUpdateSetState } from "./rules/react-builtins/no-will-update-set-state.js";
 import { noZIndex9999 } from "./rules/design/no-z-index9999.js";
 import { onlyExportComponents } from "./rules/react-builtins/only-export-components.js";
+import { preactNoChildrenLength } from "./rules/preact/preact-no-children-length.js";
+import { preactNoReactHooksImport } from "./rules/preact/preact-no-react-hooks-import.js";
+import { preactNoRenderArguments } from "./rules/preact/preact-no-render-arguments.js";
+import { preactPreferOndblclick } from "./rules/preact/preact-prefer-ondblclick.js";
+import { preactPreferOninput } from "./rules/preact/preact-prefer-oninput.js";
 import { preferDynamicImport } from "./rules/bundle-size/prefer-dynamic-import.js";
 import { preferEs6Class } from "./rules/react-builtins/prefer-es6-class.js";
 import { preferFunctionComponent } from "./rules/react-builtins/prefer-function-component.js";
+import { preferHtmlDialog } from "./rules/a11y/prefer-html-dialog.js";
 import { preferTagOverRole } from "./rules/a11y/prefer-tag-over-role.js";
 import { preferUseEffectEvent } from "./rules/state-and-effects/prefer-use-effect-event.js";
 import { preferUseSyncExternalStore } from "./rules/state-and-effects/prefer-use-sync-external-store.js";
@@ -704,6 +714,17 @@ export const reactDoctorRules = [
     },
   },
   {
+    key: "react-doctor/hooks-no-nan-in-deps",
+    id: "hooks-no-nan-in-deps",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...hooksNoNanInDeps,
+      framework: "global",
+      category: "State & Effects",
+    },
+  },
+  {
     key: "react-doctor/html-has-lang",
     id: "html-has-lang",
     source: "react-doctor",
@@ -712,6 +733,39 @@ export const reactDoctorRules = [
       ...htmlHasLang,
       framework: "global",
       category: "Accessibility",
+    },
+  },
+  {
+    key: "react-doctor/html-no-invalid-paragraph-child",
+    id: "html-no-invalid-paragraph-child",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...htmlNoInvalidParagraphChild,
+      framework: "global",
+      category: "Correctness",
+    },
+  },
+  {
+    key: "react-doctor/html-no-invalid-table-nesting",
+    id: "html-no-invalid-table-nesting",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...htmlNoInvalidTableNesting,
+      framework: "global",
+      category: "Correctness",
+    },
+  },
+  {
+    key: "react-doctor/html-no-nested-interactive",
+    id: "html-no-nested-interactive",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...htmlNoNestedInteractive,
+      framework: "global",
+      category: "Correctness",
     },
   },
   {
@@ -2530,6 +2584,61 @@ export const reactDoctorRules = [
     },
   },
   {
+    key: "react-doctor/preact-no-children-length",
+    id: "preact-no-children-length",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...preactNoChildrenLength,
+      framework: "preact",
+      category: "Preact",
+    },
+  },
+  {
+    key: "react-doctor/preact-no-react-hooks-import",
+    id: "preact-no-react-hooks-import",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...preactNoReactHooksImport,
+      framework: "preact",
+      category: "Preact",
+    },
+  },
+  {
+    key: "react-doctor/preact-no-render-arguments",
+    id: "preact-no-render-arguments",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...preactNoRenderArguments,
+      framework: "preact",
+      category: "Preact",
+    },
+  },
+  {
+    key: "react-doctor/preact-prefer-ondblclick",
+    id: "preact-prefer-ondblclick",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...preactPreferOndblclick,
+      framework: "preact",
+      category: "Preact",
+    },
+  },
+  {
+    key: "react-doctor/preact-prefer-oninput",
+    id: "preact-prefer-oninput",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...preactPreferOninput,
+      framework: "preact",
+      category: "Preact",
+    },
+  },
+  {
     key: "react-doctor/prefer-dynamic-import",
     id: "prefer-dynamic-import",
     source: "react-doctor",
@@ -2560,6 +2669,17 @@ export const reactDoctorRules = [
       ...preferFunctionComponent,
       framework: "global",
       category: "Architecture",
+    },
+  },
+  {
+    key: "react-doctor/prefer-html-dialog",
+    id: "prefer-html-dialog",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...preferHtmlDialog,
+      framework: "global",
+      category: "Accessibility",
     },
   },
   {
