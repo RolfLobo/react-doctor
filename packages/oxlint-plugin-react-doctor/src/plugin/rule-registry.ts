@@ -49,6 +49,9 @@ import { iframeHasTitle } from "./rules/a11y/iframe-has-title.js";
 import { iframeMissingSandbox } from "./rules/react-builtins/iframe-missing-sandbox.js";
 import { imgRedundantAlt } from "./rules/a11y/img-redundant-alt.js";
 import { interactiveSupportsFocus } from "./rules/a11y/interactive-supports-focus.js";
+import { jotaiDerivedAtomReturnsFreshObject } from "./rules/jotai/jotai-derived-atom-returns-fresh-object.js";
+import { jotaiSelectAtomInRenderBody } from "./rules/jotai/jotai-select-atom-in-render-body.js";
+import { jotaiTqUseRawQueryAtom } from "./rules/jotai/jotai-tq-use-raw-query-atom.js";
 import { jsAsyncReduceWithoutAwaitedAcc } from "./rules/js-performance/js-async-reduce-without-awaited-acc.js";
 import { jsBatchDomCss } from "./rules/js-performance/js-batch-dom-css.js";
 import { jsCachePropertyAccess } from "./rules/js-performance/js-cache-property-access.js";
@@ -753,6 +756,39 @@ export const reactDoctorRules = [
       ...interactiveSupportsFocus,
       framework: "global",
       category: "Accessibility",
+    },
+  },
+  {
+    key: "react-doctor/jotai-derived-atom-returns-fresh-object",
+    id: "jotai-derived-atom-returns-fresh-object",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...jotaiDerivedAtomReturnsFreshObject,
+      framework: "global",
+      category: "State & Effects",
+    },
+  },
+  {
+    key: "react-doctor/jotai-select-atom-in-render-body",
+    id: "jotai-select-atom-in-render-body",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...jotaiSelectAtomInRenderBody,
+      framework: "global",
+      category: "State & Effects",
+    },
+  },
+  {
+    key: "react-doctor/jotai-tq-use-raw-query-atom",
+    id: "jotai-tq-use-raw-query-atom",
+    source: "react-doctor",
+    originallyExternal: false,
+    rule: {
+      ...jotaiTqUseRawQueryAtom,
+      framework: "global",
+      category: "State & Effects",
     },
   },
   {

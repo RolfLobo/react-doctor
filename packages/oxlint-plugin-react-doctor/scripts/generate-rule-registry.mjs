@@ -70,6 +70,7 @@ const BUCKET_TO_DEFAULT_CATEGORY = {
   correctness: "Correctness",
   design: "Architecture",
   "js-performance": "Performance",
+  jotai: "State & Effects",
   nextjs: "Next.js",
   performance: "Performance",
   "react-builtins": "Correctness",
