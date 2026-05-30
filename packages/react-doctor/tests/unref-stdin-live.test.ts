@@ -28,8 +28,11 @@ const unrefStdinSourceUrl = pathToFileURL(
   join(currentDirectory, "../src/cli/utils/unref-stdin.ts"),
 ).href;
 
-// Older Node needs the flag; Node >= 23.6 strips types by default.
-const nodeStripTypesArgs = process.features.typescript ? [] : ["--experimental-strip-types"];
+// The probe spawns a child Node that imports the real `.ts` source, so it can
+// only run where Node can natively strip TypeScript types (>= 22.6, unflagged
+// from 22.18). Older Node (e.g. the 20.19 CI lane) has no type-strip path at
+// all, so the child exits with no output — skip there instead of failing.
+const canRunTypeScriptEntrypoint = Boolean(process.features.typescript);
 
 const probeScript = `
 import * as readline from "node:readline";
@@ -57,7 +60,7 @@ let probeScriptPath: string;
 
 const runPromptProbe = (stdinMode: "tty" | "pipe"): Promise<LiveProbeResult> =>
   new Promise((resolve) => {
-    const child = spawn(process.execPath, [...nodeStripTypesArgs, probeScriptPath, stdinMode], {
+    const child = spawn(process.execPath, [probeScriptPath, stdinMode], {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -82,7 +85,7 @@ const runPromptProbe = (stdinMode: "tty" | "pipe"): Promise<LiveProbeResult> =>
     });
   });
 
-describe("unrefStdin (live)", () => {
+describe.skipIf(!canRunTypeScriptEntrypoint)("unrefStdin (live)", () => {
   beforeAll(() => {
     probeDirectory = mkdtempSync(join(tmpdir(), "react-doctor-unref-stdin-"));
     probeScriptPath = join(probeDirectory, "prompt-keepalive-probe.ts");
