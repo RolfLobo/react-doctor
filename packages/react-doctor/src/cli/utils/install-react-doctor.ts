@@ -300,7 +300,7 @@ const buildWorkflowContent = (): string =>
     "    runs-on: ubuntu-latest",
     "    steps:",
     "      - uses: actions/checkout@v5",
-    "      - uses: millionco/react-doctor@v1",
+    "      - uses: millionco/react-doctor@main",
     "",
   ].join("\n");
 
