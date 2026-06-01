@@ -1,5 +1,5 @@
 ---
-"react-doctor": minor
+"react-doctor": patch
 ---
 
 Align the CLI with the clig.dev and 12-factor CLI guidelines:
