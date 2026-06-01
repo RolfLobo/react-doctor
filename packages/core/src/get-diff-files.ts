@@ -8,13 +8,12 @@ import type { DiffInfo } from "./types/index.js";
  * Git service runs through Effect's `ChildProcess` (true subprocess
  * spawn, not `spawnSync`).
  *
- * Failures propagate as the tagged `ReactDoctorError` (rejected by
- * `Effect.runPromise`) rather than being flattened into a plain
- * `Error`. The message is unchanged — `ReactDoctorError.message`
- * defers to `reason.message` — so message-matching callers keep
- * working, while the CLI can now dispatch on `error.reason._tag` to
- * render diff-base mistakes (`GitBaseBranchInvalid` /
- * `GitBaseBranchMissing`) as clean user errors instead of crashes.
+ * Tagged-reason errors are dispatched via `Effect.catchReasons`
+ * (a v4-native API for narrowing inside a `Schema.TaggedErrorClass`
+ * union without manual `instanceof` checks). The recovered branches
+ * raise plain `Error`s so existing thrown-class consumers continue
+ * to work — anything else (real `GitInvocationFailed`, etc.)
+ * propagates as the tagged `ReactDoctorError` through `Effect.runPromise`.
  */
 export const getDiffInfo = (
   directory: string,
@@ -31,7 +30,13 @@ export const getDiffInfo = (
         changedFiles: [...selection.changedFiles],
         ...(selection.isCurrentChanges ? { isCurrentChanges: true } : {}),
       } satisfies DiffInfo;
-    }).pipe(Effect.provide(Git.layerNode)),
+    }).pipe(
+      Effect.provide(Git.layerNode),
+      Effect.catchReasons("ReactDoctorError", {
+        GitBaseBranchInvalid: (reason) => Effect.die(new Error(reason.detail)),
+        GitBaseBranchMissing: (reason) => Effect.die(new Error(reason.message)),
+      }),
+    ),
   );
 
 export const filterSourceFiles = (filePaths: string[]): string[] =>

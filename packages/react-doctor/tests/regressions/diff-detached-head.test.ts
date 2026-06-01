@@ -15,13 +15,23 @@ import path from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { getDiffInfo } from "@react-doctor/core";
-import { commitAll, initGitRepo, writeFile } from "./_helpers.js";
+import { initGitRepo, writeFile } from "./_helpers.js";
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rd-diff-detached-"));
 
 afterAll(() => {
   fs.rmSync(tempRoot, { recursive: true, force: true });
 });
+
+const commitAll = (cwd: string, message: string): void => {
+  spawnSync("git", ["add", "."], { cwd });
+  spawnSync("git", ["commit", "-q", "-m", message], { cwd });
+};
+
+const headCommitHash = (cwd: string): string => {
+  const result = spawnSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" });
+  return result.stdout.toString().trim();
+};
 
 const buildPullRequestCheckoutFixture = (
   caseId: string,
@@ -31,7 +41,9 @@ const buildPullRequestCheckoutFixture = (
 
   writeFile(path.join(repoDir, "src", "app.tsx"), "export const App = () => null;\n");
   initGitRepo(repoDir);
-  const baseCommitHash = commitAll(repoDir, "init");
+  commitAll(repoDir, "init");
+
+  const baseCommitHash = headCommitHash(repoDir);
 
   spawnSync("git", ["checkout", "-q", "-b", "feature"], { cwd: repoDir });
   const changedFilePath = "src/feature.tsx";
