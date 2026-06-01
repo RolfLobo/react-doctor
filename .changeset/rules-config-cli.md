@@ -1,5 +1,5 @@
 ---
-"react-doctor": minor
+"react-doctor": patch
 ---
 
 Configure React Doctor with `doctor.config.{ts,js,mjs,cjs,mts,cts,json}` (or a `package.json#reactDoctor` key), and add `react-doctor rules` commands to list, explain, and configure rules without hand-editing config.
