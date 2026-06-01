@@ -10,8 +10,13 @@ import {
 import type { Diagnostic, ScoreResult } from "@react-doctor/core";
 import { buildSectionDivider } from "./build-section-divider.js";
 import { colorizeByScore } from "./colorize-by-score.js";
+import { SCORE_PROJECTION_BAR_ROWS_ABOVE_CURSOR } from "./constants.js";
 import { collectAffectedFiles } from "./render-diagnostics.js";
-import { printNoScoreHeader, printScoreHeader } from "./render-score-header.js";
+import {
+  animateScoreProjection,
+  printNoScoreHeader,
+  printScoreHeader,
+} from "./render-score-header.js";
 import { writeDiagnosticsDirectory } from "./write-diagnostics-directory.js";
 
 const buildShareUrl = (
@@ -74,12 +79,23 @@ export interface PrintSummaryInput {
   readonly totalSourceFileCount: number;
   readonly noScoreMessage: string;
   readonly verbose?: boolean;
+  // First interactive run on a TTY: draw the score bar plain, then grow the
+  // projected "ghost gain" in (eased) in sync with the "you could improve"
+  // line. Defaults to the static projected bar drawn by `printScoreHeader`.
+  readonly animateProjection?: boolean;
 }
 
 export const printSummary = (input: PrintSummaryInput): Effect.Effect<void> =>
   Effect.gen(function* () {
     if (input.scoreResult) {
-      yield* printScoreHeader(input.scoreResult, input.potentialScore ?? undefined);
+      const animateProjection =
+        Boolean(input.animateProjection) && input.potentialScore != null && !input.verbose;
+      // When animating, draw the bar plain here; the ghost gain is grown in
+      // below, in sync with the improve line.
+      yield* printScoreHeader(
+        input.scoreResult,
+        animateProjection ? undefined : (input.potentialScore ?? undefined),
+      );
       if (input.potentialScore != null) {
         const improvement = input.potentialScore - input.scoreResult.score;
         yield* Console.log(
@@ -87,6 +103,13 @@ export const printSummary = (input: PrintSummaryInput): Effect.Effect<void> =>
             colorizeByScore(`+${improvement}%`, input.potentialScore) +
             highlighter.gray(` by fixing the top ${TOP_ERRORS_DISPLAY_COUNT} issues`),
         );
+        if (animateProjection) {
+          yield* animateScoreProjection(
+            input.scoreResult,
+            input.potentialScore,
+            SCORE_PROJECTION_BAR_ROWS_ABOVE_CURSOR,
+          );
+        }
       }
     } else {
       yield* printNoScoreHeader(input.noScoreMessage);

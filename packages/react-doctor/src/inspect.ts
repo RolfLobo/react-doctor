@@ -41,6 +41,13 @@ import { computeProjectedScore } from "./cli/utils/compute-score-projection.js";
 import { buildRulePriorityMap } from "./cli/utils/diagnostic-grouping.js";
 import { printDiagnostics } from "./cli/utils/render-diagnostics.js";
 import { isNonInteractiveEnvironment } from "./cli/utils/is-non-interactive-environment.js";
+import {
+  canAnimateOnboarding,
+  isOnboardingForced,
+  onboardingSectionPause,
+  shouldRecordOnboarding,
+} from "./cli/utils/onboarding-pacing.js";
+import { hasCompletedOnboarding, markOnboardingComplete } from "./cli/utils/onboarding-state.js";
 import { printProjectDetection } from "./cli/utils/render-project-detection.js";
 import {
   printBrandingOnlyHeader,
@@ -330,6 +337,21 @@ const runInspectWithRuntime = async (
   const score = didLintFail ? null : output.score;
 
   const elapsedMilliseconds = performance.now() - startTime;
+  // Stagger sections only on a user's first interactive run. Gating on
+  // `canAnimateOnboarding` (the same predicate the welcome scene, animations,
+  // and marker use) keeps the decision single-sourced: we only pace when we can
+  // actually show — and thus record — onboarding, so we never insert silent
+  // dead sleeps. Nothing to pace for silent/score-only/suppressed/verbose
+  // renders; the persisted marker (read last) limits it to the very first run.
+  // `REACT_DOCTOR_FORCE_ONBOARDING` replays the first-run experience on demand.
+  const forceOnboarding = isOnboardingForced();
+  const paceOnboardingSections =
+    !options.silent &&
+    !options.scoreOnly &&
+    !options.suppressRendering &&
+    !options.verbose &&
+    canAnimateOnboarding(process.stdout) &&
+    (forceOnboarding || !hasCompletedOnboarding());
   const finalizeInput: FinalizeInput = {
     options,
     elapsedMilliseconds,
@@ -352,6 +374,19 @@ const runInspectWithRuntime = async (
       options.silent ? Effect.provideService(Console.Console, silentConsole) : (program) => program,
     ),
   );
+  // Burn the first-run marker only when the onboarding reveal actually ran — not
+  // for verbose, the classic non-interactive layout, or a forced demo (which
+  // replays every time). See `shouldRecordOnboarding`.
+  if (
+    shouldRecordOnboarding({
+      paceOnboardingSections,
+      forceOnboarding,
+      verbose: options.verbose,
+      isNonInteractiveEnvironment: options.isNonInteractiveEnvironment,
+    })
+  ) {
+    markOnboardingComplete();
+  }
   recordScanMetrics({
     result,
     mode: isDiffMode ? "diff" : "full",
@@ -444,6 +479,14 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
       return buildResult();
     }
 
+    // Report animations — the staggered section reveal, the category count-up,
+    // and the eased score-projection "ghost gain" — play on every interactive
+    // render, like the animated score bar, not just the first-run onboarding.
+    // `!silent` keeps the raw cursor writes out of JSON / piped output.
+    const animateRender =
+      !options.silent && !options.verbose && canAnimateOnboarding(process.stdout);
+    const pause = onboardingSectionPause(animateRender);
+
     const surfaceDiagnostics = filterDiagnosticsForSurface(
       [...diagnostics],
       options.outputSurface,
@@ -454,6 +497,7 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
     const lintSourceFileCount = isDiffMode ? options.includePaths.length : project.sourceFileCount;
 
     if (surfaceDiagnostics.length === 0) {
+      yield* pause;
       if (hasSkippedChecks) {
         const skippedLabel = skippedChecks.join(" and ");
         yield* Console.warn(
@@ -471,6 +515,7 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
         yield* Console.log(highlighter.success("No issues found!"));
       }
       yield* Console.log("");
+      yield* pause;
       if (hasSkippedChecks) {
         yield* printBrandingOnlyHeader;
         yield* Console.log(highlighter.gray("  Score not shown — some checks could not complete."));
@@ -482,6 +527,7 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
       return buildResult();
     }
 
+    yield* pause;
     yield* Console.log("");
     yield* printDiagnostics(
       [...surfaceDiagnostics],
@@ -489,6 +535,7 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
       directory,
       buildRulePriorityMap([score]),
       isCodingAgentEnvironment(),
+      { sectionPause: pause, animateCountUp: animateRender },
     );
     if (options.isNonInteractiveEnvironment && options.outputSurface !== "prComment") {
       yield* printAgentGuidance();
@@ -512,6 +559,7 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
       : null;
 
     const shouldShowShareLink = !options.noScore && options.share && !options.isCi;
+    yield* pause;
     yield* printSummary({
       diagnostics: [...surfaceDiagnostics],
       elapsedMilliseconds,
@@ -520,6 +568,7 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
       totalSourceFileCount: lintSourceFileCount,
       noScoreMessage,
       verbose: options.verbose,
+      animateProjection: animateRender,
     });
 
     if (hasSkippedChecks) {
@@ -530,6 +579,7 @@ const finalizeAndRender = (input: FinalizeInput): Effect.Effect<InspectResult> =
       );
     }
 
+    yield* pause;
     yield* printFooter({
       diagnostics: [...surfaceDiagnostics],
       scoreResult: score,
