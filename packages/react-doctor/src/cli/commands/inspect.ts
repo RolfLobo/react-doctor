@@ -38,7 +38,6 @@ import {
 } from "../utils/json-mode.js";
 import { canAnimateOnboarding, isOnboardingForced } from "../utils/onboarding-pacing.js";
 import { hasCompletedOnboarding } from "../utils/onboarding-state.js";
-import { printAnnotations } from "../utils/print-annotations.js";
 import { printBrandedHeader } from "../utils/print-branded-header.js";
 import { playWelcomeScene, RETURNING_USER_SPEED_MULTIPLIER } from "../utils/render-welcome.js";
 import { reportErrorToSentry } from "../utils/report-error.js";
@@ -53,12 +52,14 @@ import {
 import { resolveCliInspectOptions } from "../utils/resolve-cli-inspect-options.js";
 import { resolveDiffMode } from "../utils/resolve-diff-mode.js";
 import { resolveEffectiveDiff } from "../utils/resolve-effective-diff.js";
-import { resolveFailOnLevel } from "../utils/resolve-fail-on-level.js";
+import { resolveMergeBaseRef } from "../utils/materialize-baseline-files.js";
+import { resolveBlockingLevel } from "../utils/resolve-blocking-level.js";
 import { resolveProjectDiffIncludePaths } from "../utils/resolve-project-diff-include-paths.js";
 import { runExplain } from "../utils/run-explain.js";
 import { selectProjects } from "../utils/select-projects.js";
-import { shouldFailForDiagnostics } from "../utils/should-fail-for-diagnostics.js";
+import { shouldBlockCi } from "../utils/should-block-ci.js";
 import { shouldSkipPrompts } from "../utils/should-skip-prompts.js";
+import { warnDeprecatedFailOn } from "../utils/warn-deprecated-fail-on.js";
 import { validateModeFlags } from "../utils/validate-mode-flags.js";
 import { VERSION } from "../utils/version.js";
 
@@ -72,6 +73,13 @@ interface FinalizeScansInput {
   readonly completedScans: CompletedScan[];
   readonly mode: JsonReportMode;
   readonly diff: DiffInfo | null;
+  /**
+   * True when a baseline comparison was attempted (a committed diff against a
+   * base). If it produced no delta — the base ref was unfetchable, or the head
+   * or base lint failed — the run degrades to a plain diff: findings stay
+   * visible but the gate is skipped (don't block on uncertain attribution).
+   */
+  readonly baselineIntended: boolean;
   readonly isJsonMode: boolean;
   readonly isScoreOnly: boolean;
   readonly flags: InspectFlags;
@@ -82,41 +90,72 @@ interface FinalizeScansInput {
 
 /**
  * Post-scan finalization shared by the staged-arm and project-loop
- * paths of `inspectAction`: emit the JSON report (when in JSON mode),
- * print PR annotations (when `--annotations`), and set
- * `process.exitCode = 1` when the configured fail-on threshold is
- * crossed. Both arms previously inlined the same four-step shape.
+ * paths of `inspectAction`: emit the JSON report (when in JSON mode)
+ * and set `process.exitCode = 1` when a diagnostic at or above the
+ * `--blocking` threshold (default `"error"`) reaches the `ciFailure`
+ * surface. `--blocking none` keeps the scan advisory (always exits 0).
  */
 const finalizeScans = (input: FinalizeScansInput): void => {
+  // Aggregate the per-project baseline deltas into one report-level block so the
+  // JSON (and the GitHub Action) sees a single new/fixed total across a
+  // workspace scan. Present only when at least one project produced a delta.
+  const baselineDeltas = input.completedScans.flatMap((scan) =>
+    scan.result.baselineDelta ? [scan.result.baselineDelta] : [],
+  );
+  // Baseline succeeded only if at least one project ran AND every scanned
+  // project produced a delta. Otherwise — a project's base ref was unfetchable,
+  // its head/base lint failed, or no project had changed source to scan — the
+  // run degrades to a plain diff: report `diff` not `baseline`, drop the baseline
+  // block, and skip the gate so CI never blocks on findings whose
+  // new-vs-pre-existing attribution is unknown. Findings stay visible. (An empty
+  // scan set is degraded too, so it can't slip through as a "clean baseline".)
+  //
+  // v1 limitation: in a partial-degraded workspace, sibling projects that DID
+  // compute a delta still expose only their introduced diagnostics (filtering
+  // happens per project inside `inspect()`), so a degraded run under-shows their
+  // pre-existing issues. The gate is still correct (it never blocks here);
+  // surfacing full findings everywhere would mean deferring per-project
+  // filtering out of `inspect()` (an InspectResult contract change) — a v2
+  // follow-up. Single-project and all-succeed runs are unaffected.
+  const baselineComputed =
+    input.completedScans.length > 0 &&
+    input.completedScans.every((scan) => scan.result.baselineDelta !== undefined);
+  const baselineDegraded = input.baselineIntended && !baselineComputed;
+  const mode: JsonReportMode = baselineDegraded ? "diff" : input.mode;
+
   if (input.isJsonMode) {
+    const baseline =
+      baselineComputed && baselineDeltas.length > 0
+        ? {
+            baseRef: baselineDeltas[0].baseRef,
+            fixedCount: baselineDeltas.reduce((total, delta) => total + delta.fixedCount, 0),
+            baseTotalCount: baselineDeltas.reduce(
+              (total, delta) => total + delta.baseTotalCount,
+              0,
+            ),
+          }
+        : undefined;
     writeJsonReport(
       buildJsonReport({
         version: VERSION,
         directory: input.resolvedDirectory,
-        mode: input.mode,
+        mode,
         diff: input.diff,
         scans: input.completedScans,
         totalElapsedMilliseconds: performance.now() - input.startTime,
+        baseline,
       }),
     );
   }
 
-  if (input.flags.annotations) {
-    printAnnotations(input.diagnostics, input.isJsonMode);
-  }
+  if (input.isScoreOnly || baselineDegraded) return;
 
   const ciFailureDiagnostics = filterDiagnosticsForSurface(
     input.diagnostics,
     "ciFailure",
     input.userConfig,
   );
-  if (
-    !input.isScoreOnly &&
-    shouldFailForDiagnostics(
-      ciFailureDiagnostics,
-      resolveFailOnLevel(input.flags, input.userConfig),
-    )
-  ) {
+  if (shouldBlockCi(ciFailureDiagnostics, resolveBlockingLevel(input.flags, input.userConfig))) {
     process.exitCode = 1;
   }
 };
@@ -124,6 +163,10 @@ const finalizeScans = (input: FinalizeScansInput): void => {
 const buildChangedFilesDiffInfo = (changedFiles: string[]): DiffInfo => ({
   currentBranch: process.env.GITHUB_HEAD_REF?.trim() || null,
   baseBranch: process.env.GITHUB_BASE_REF?.trim() || "pull request target",
+  // The GitHub Action forwards the PR base commit so baseline mode can read
+  // base content against a SHA that's actually fetched (branch names rarely
+  // resolve in a shallow PR checkout). Empty in non-Action runs.
+  baseSha: process.env.REACT_DOCTOR_BASE_SHA?.trim() || undefined,
   changedFiles,
   isCurrentChanges: false,
 });
@@ -185,6 +228,7 @@ export const inspectAction = async (directory: string, flags: InspectFlags): Pro
     const userConfig = scanTarget.userConfig;
     const resolvedDirectory = scanTarget.resolvedDirectory;
     setJsonReportDirectory(resolvedDirectory);
+    warnDeprecatedFailOn(flags, userConfig);
     if (scanTarget.didRedirectViaRootDir && !isQuiet) {
       logger.dim(
         `Redirected to ${highlighter.info(toRelativePath(resolvedDirectory, requestedDirectory))} via react-doctor config "rootDir".`,
@@ -192,7 +236,7 @@ export const inspectAction = async (directory: string, flags: InspectFlags): Pro
       logger.break();
     }
 
-    const explainArgument = flags.explain ?? flags.why;
+    const explainArgument = flags.explain;
     if (explainArgument !== undefined) {
       await runExplain(explainArgument, {
         resolvedDirectory,
@@ -224,7 +268,7 @@ export const inspectAction = async (directory: string, flags: InspectFlags): Pro
     }
 
     const scanOptions = resolveCliInspectOptions(flags, userConfig);
-    const skipPrompts = shouldSkipPrompts({ yes: flags.yes, full: flags.full, json: flags.json });
+    const skipPrompts = shouldSkipPrompts({ yes: flags.yes, json: flags.json });
 
     if (flags.staged) {
       setJsonReportMode("staged");
@@ -287,6 +331,7 @@ export const inspectAction = async (directory: string, flags: InspectFlags): Pro
           completedScans: [{ directory: resolvedDirectory, result: remappedInspectResult }],
           mode: "staged",
           diff: null,
+          baselineIntended: false,
           isJsonMode,
           isScoreOnly,
           flags,
@@ -302,10 +347,9 @@ export const inspectAction = async (directory: string, flags: InspectFlags): Pro
 
     const projectDirectories = await selectProjects(resolvedDirectory, flags.project, skipPrompts);
 
-    const changedFilesDiffInfo =
-      flags.changedFilesFrom && !flags.full
-        ? buildChangedFilesDiffInfo(readChangedFilesFrom(path.resolve(flags.changedFilesFrom)))
-        : null;
+    const changedFilesDiffInfo = flags.changedFilesFrom
+      ? buildChangedFilesDiffInfo(readChangedFilesFrom(path.resolve(flags.changedFilesFrom)))
+      : null;
     const effectiveDiff = resolveEffectiveDiff(flags, userConfig);
     const explicitBaseBranch = typeof effectiveDiff === "string" ? effectiveDiff : undefined;
     const wantsDiffMode = effectiveDiff !== undefined && effectiveDiff !== false;
@@ -322,11 +366,27 @@ export const inspectAction = async (directory: string, flags: InspectFlags): Pro
       changedFilesDiffInfo !== null ||
       (await resolveDiffMode(diffInfo, effectiveDiff, skipPrompts, isQuiet));
 
+    // Baseline (PR-introduced-issues-only) mode: when diffing against a base
+    // ref (not just uncommitted changes), read base content from the SAME
+    // commit the file diff was taken against so the file set and the base
+    // snapshot agree. The GitHub Action forwards the PR base SHA — three-dot
+    // PR semantics, so merge-base it with HEAD; a local `--diff` already knows
+    // its exact base (`diffBaseRef`: `A` for two-dot `A..B`, the merge-base for
+    // three-dot / single-base). A null ref (base not fetched, detached, or git
+    // unavailable) degrades to a plain diff scan that shows all findings.
+    const baselineRef =
+      isDiffMode && diffInfo && !diffInfo.isCurrentChanges
+        ? diffInfo.baseSha
+          ? await resolveMergeBaseRef(resolvedDirectory, diffInfo.baseSha)
+          : (diffInfo.diffBaseRef ??
+            (await resolveMergeBaseRef(resolvedDirectory, diffInfo.baseBranch)))
+        : null;
+
     // HACK: set the report-mode marker BEFORE the scan loop runs — if the
     // user hits Ctrl-C mid-scan, the SIGINT handler reads it for the JSON
     // cancel report. Setting it after the loop completes means a cancelled
     // diff scan would report mode: "full".
-    setJsonReportMode(isDiffMode ? "diff" : "full");
+    setJsonReportMode(baselineRef ? "baseline" : isDiffMode ? "diff" : "full");
 
     if (isDiffMode && diffInfo && !isQuiet) {
       if (diffInfo.isCurrentChanges) {
@@ -369,6 +429,7 @@ export const inspectAction = async (directory: string, flags: InspectFlags): Pro
         includePaths,
         configOverride: userConfig,
         suppressRendering: isMultiProject,
+        baseline: baselineRef ? { ref: baselineRef } : undefined,
       });
       allDiagnostics.push(...scanResult.diagnostics);
       completedScans.push({ directory: projectDirectory, result: scanResult });
@@ -394,8 +455,11 @@ export const inspectAction = async (directory: string, flags: InspectFlags): Pro
     finalizeScans({
       diagnostics: allDiagnostics,
       completedScans,
-      mode: isDiffMode ? "diff" : "full",
+      // A resolved base ref means a baseline run; finalizeScans downgrades this
+      // to `diff` if no delta was produced (degraded run).
+      mode: baselineRef ? "baseline" : isDiffMode ? "diff" : "full",
       diff: isDiffMode ? diffInfo : null,
+      baselineIntended: isDiffMode && diffInfo !== null && !diffInfo.isCurrentChanges,
       isJsonMode,
       isScoreOnly,
       flags,
@@ -452,7 +516,7 @@ export const inspectAction = async (directory: string, flags: InspectFlags): Pro
     const isUserError = isExpectedUserError(error);
     const sentryEventId = isUserError ? undefined : await reportErrorToSentry(error);
     if (isJsonMode) {
-      writeJsonErrorReport(error);
+      writeJsonErrorReport(error, sentryEventId);
       process.exitCode = 1;
       return;
     }

@@ -53,7 +53,7 @@ Companion extensions for VS Code/Cursor and Zed live under `packages/`; any othe
 
 [![GitHub Action](https://img.shields.io/badge/GitHub%20Action-React%20Doctor-000000?style=flat&labelColor=000000&logo=githubactions&logoColor=white)](https://github.com/marketplace/actions/react-doctor)
 
-Add the reusable GitHub Action from Marketplace to scan every pull request, show inline annotations, and leave findings where reviewers already look.
+On a pull request the Action reports only the issues your change **introduced** — it scans the PR and the merge-base and reports the difference (like Codecov for coverage), leaving pre-existing findings alone. It posts inline review comments on the changed lines and a sticky summary with the new / fixed delta.
 
 ```yaml
 name: React Doctor
@@ -76,8 +76,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # so React Doctor can diff against the merge-base for new-vs-existing
       - uses: millionco/react-doctor@v1
 ```
+
+`fetch-depth: 0` is recommended so the baseline comparison can read the base commit; without enough history the Action falls back to reporting every finding in the changed files.
 
 `@v1` always resolves to the latest `v1.x` release of the Action. For hardened CI — recommended whenever the workflow is granted `pull-requests: write` — pin to a full commit SHA instead and let Dependabot or Renovate keep it current:
 

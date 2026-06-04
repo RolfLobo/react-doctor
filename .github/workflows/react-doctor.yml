@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v5
 
@@ -33,6 +34,6 @@ jobs:
 
       - uses: ./
         with:
-          fail-on: none
+          blocking: none
           node-version: 22.18.0
           version: ./packages/react-doctor

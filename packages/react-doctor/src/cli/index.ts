@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { CANONICAL_GITHUB_URL, highlighter } from "@react-doctor/core";
 import { flushSentry, initializeSentry } from "../instrument.js";
 import { inspectAction } from "./commands/inspect.js";
@@ -14,6 +14,7 @@ import {
   rulesUnignoreTagAction,
 } from "./commands/rules.js";
 import { versionAction } from "./commands/version.js";
+import { whyAction } from "./commands/why.js";
 import { applyColorPreference } from "./utils/apply-color-preference.js";
 import { exitGracefully } from "./utils/exit-gracefully.js";
 import { guardStdin } from "./utils/guard-stdin.js";
@@ -21,6 +22,7 @@ import { handleError, handleUserError } from "./utils/handle-error.js";
 import { isExpectedUserError } from "./utils/is-expected-user-error.js";
 import { isJsonModeActive, writeJsonErrorReport } from "./utils/json-mode.js";
 import { normalizeHelpInvocation } from "./utils/normalize-help-command.js";
+import { assertNoRemovedFlags } from "./utils/removed-cli-flags.js";
 import { reportErrorToSentry } from "./utils/report-error.js";
 import { stripUnknownCliFlags } from "./utils/strip-unknown-cli-flags.js";
 import { unrefStdin } from "./utils/unref-stdin.js";
@@ -59,9 +61,9 @@ ${formatExampleLines([
   ["react-doctor ./apps/web", "scan a specific directory"],
   ["react-doctor --diff main", "scan only files changed vs. main"],
   ["react-doctor --staged", "scan staged files (pre-commit hook)"],
-  ["react-doctor --fail-on warning", "exit non-zero on warnings (CI gate)"],
+  ["react-doctor --blocking warning", "fail CI on warnings too (default: error)"],
   ["react-doctor --json > report.json", "write a machine-readable report"],
-  ["react-doctor --explain src/App.tsx:42", "explain why a rule fired there"],
+  ["react-doctor why src/App.tsx:42", "explain why a rule fired there"],
   ["react-doctor install", "set up the agent skill and git hook"],
 ])}
 
@@ -106,7 +108,6 @@ const program = new Command()
   .option("--json", "output a single structured JSON report (suppresses other output)")
   .option("--json-compact", "with --json, emit compact JSON (no indentation)")
   .option("-y, --yes", "skip prompts, scan all workspace projects")
-  .option("--full", "force a full scan (overrides any `diff` value in config or `--diff`)")
   .option(
     "--no-parallel",
     "lint serially with one worker (default: parallel across CPU cores; set the worker count with REACT_DOCTOR_PARALLEL)",
@@ -114,11 +115,15 @@ const program = new Command()
   .option("--project <name>", "select workspace project (comma-separated for multiple)")
   .option(
     "--diff [base]",
-    "scan only files changed vs base branch (pass `false` to disable; overridden by --full)",
+    "scan only files changed vs base branch (pass `false` to force a full scan, overriding config)",
   )
-  .option(
-    "--changed-files-from <file>",
-    "internal: scan source files listed in a newline-delimited changed-files file",
+  .addOption(
+    // Internal: the GitHub Action passes the PR's changed-file list here.
+    // Hidden from --help; it's plumbing, not user surface.
+    new Option(
+      "--changed-files-from <file>",
+      "scan source files listed in a newline-delimited changed-files file",
+    ).hideHelp(),
   )
   .option("--no-score", "skip the score API, the share URL, and crash reporting")
   .option(
@@ -127,22 +132,14 @@ const program = new Command()
   )
   .option("--staged", "scan only staged (git index) files for pre-commit hooks")
   .option(
-    "--fail-on <level>",
-    "exit with error code on diagnostics: error, warning, none (default: none)",
+    "--blocking <level>",
+    "severity that fails CI: error (default), warning, or none (advisory)",
   )
-  .option("--annotations", "output diagnostics as GitHub Actions annotations")
-  .option(
-    "--pr-comment",
-    "tune CLI output for sticky PR comments (drops weak-signal rule families like `design` from the printed list and the fail-on gate; configure via config.surfaces)",
-  )
-  .option(
-    "--explain <file:line>",
-    "diagnose why a rule fired or why a suppression didn't apply at a specific location",
-  )
-  .option("--why <file:line>", "alias for --explain")
-  .option(
-    "--respect-inline-disables",
-    "respect inline `// eslint-disable*` / `// oxlint-disable*` comments (default)",
+  .addOption(
+    // Deprecated alias for --blocking (warns at runtime). Hidden from --help but
+    // kept functional: it takes a value, so hard-removing it would turn
+    // `--fail-on warning` into a stray positional. Remove in a future major.
+    new Option("--fail-on <level>", "[deprecated] alias for --blocking <level>").hideHelp(),
   )
   .option(
     "--no-respect-inline-disables",
@@ -155,6 +152,15 @@ const program = new Command()
   .addHelpText("after", renderRootHelpEpilog);
 
 program.action(inspectAction);
+
+program
+  .command("why <location>")
+  .description("Explain why a rule fired (or why a suppression didn't apply) at a file:line")
+  .option("--project <name>", "select workspace project (comma-separated for multiple)")
+  .option("-c, --cwd <cwd>", "working directory", process.cwd())
+  .option("--color", "force colored output")
+  .option("--no-color", "disable colored output (also honors NO_COLOR)")
+  .action((location, options) => whyAction(location, options));
 
 program
   .command("install")
@@ -285,8 +291,11 @@ applyColorPreference(strippedArgv);
 // 12-factor (#1): map `help` / `help <command>` to Commander's `--help`.
 const argv = normalizeHelpInvocation(strippedArgv, knownCommands);
 
-program
-  .parseAsync(argv)
+Promise.resolve()
+  // Reject removed flags before parsing so they're a clean migration error, not
+  // a silent no-op (they'd otherwise be stripped before Commander sees them).
+  .then(() => assertNoRemovedFlags(process.argv))
+  .then(() => program.parseAsync(argv))
   // Deliver any queued performance transaction before the process exits on the
   // success path; error funnels flush via `reportErrorToSentry`.
   .then(() => flushSentry())
@@ -297,7 +306,7 @@ program
     const isUserError = isExpectedUserError(error);
     const sentryEventId = isUserError ? undefined : await reportErrorToSentry(error);
     if (isJsonModeActive()) {
-      writeJsonErrorReport(error);
+      writeJsonErrorReport(error, sentryEventId);
       process.exit(1);
     }
     if (isUserError) {

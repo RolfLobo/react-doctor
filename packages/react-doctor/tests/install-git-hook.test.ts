@@ -53,9 +53,9 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
     expect(result.status).toBe("created");
     expect(result.kind).toBe("git");
     expect(hookContent).toContain("#!/bin/sh");
-    expect(hookContent).toContain("react-doctor --staged --fail-on warning");
-    expect(hookContent).toContain("pnpm dlx react-doctor@latest --staged --fail-on warning");
-    expect(hookContent).toContain("npx --yes react-doctor@latest --staged --fail-on warning");
+    expect(hookContent).toContain("react-doctor --staged --blocking warning");
+    expect(hookContent).toContain("pnpm dlx react-doctor@latest --staged --blocking warning");
+    expect(hookContent).toContain("npx --yes react-doctor@latest --staged --blocking warning");
     expect(hookContent).toContain("Want them fixed?");
     expect(hookContent).not.toContain("Stop commit");
     expect(hookContent).not.toContain(".react-doctor/hooks/pre-commit");
@@ -91,7 +91,7 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
     const managedBlockMatches = hookContent.match(/# react-doctor hook start/g) ?? [];
 
     expect(managedBlockMatches).toHaveLength(1);
-    expect(hookContent).toContain("react-doctor --staged --fail-on warning");
+    expect(hookContent).toContain("react-doctor --staged --blocking warning");
   });
 
   it("replaces the legacy managed-runner launcher block", () => {
@@ -117,7 +117,7 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
 
     const hookContent = readHook(fixture.hookPath);
     expect(hookContent).toContain("# react-doctor hook start");
-    expect(hookContent).toContain("react-doctor --staged --fail-on warning");
+    expect(hookContent).toContain("react-doctor --staged --blocking warning");
     expect(hookContent).not.toContain("hook launcher");
     expect(hookContent).not.toContain(".react-doctor/hooks/pre-commit");
     expect(fs.existsSync(legacyRunnerPath)).toBe(false);
@@ -231,7 +231,7 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
         encoding: "utf8",
       }).trim(),
     ).toBe(".husky");
-    expect(readHook(target.hookPath)).toContain("react-doctor --staged --fail-on warning");
+    expect(readHook(target.hookPath)).toContain("react-doctor --staged --blocking warning");
   });
 
   it("uses Vite Plus hooks when the project has Vite Plus installed", () => {
@@ -265,7 +265,7 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
         encoding: "utf8",
       }).trim(),
     ).toBe(".vite-hooks");
-    expect(readHook(target.hookPath)).toContain("react-doctor --staged --fail-on warning");
+    expect(readHook(target.hookPath)).toContain("react-doctor --staged --blocking warning");
   });
 
   it("uses Husky before Vite Plus when both are present", () => {
@@ -324,7 +324,7 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
     expect(target.kind).toBe("simple-git-hooks");
     expect(preCommit).toContain("pnpm lint");
     expect(preCommit.match(/react_doctor_output=\$\(mktemp/g)).toHaveLength(1);
-    expect(preCommit).toContain("react-doctor --staged --fail-on warning");
+    expect(preCommit).toContain("react-doctor --staged --blocking warning");
   });
 
   it("creates lefthook config for lefthook projects", () => {
@@ -502,7 +502,9 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
     );
     expect(target.kind).toBe("yorkie");
     expect(packageJson.gitHooks["pre-commit"]).toContain("pnpm lint");
-    expect(packageJson.gitHooks["pre-commit"]).toContain("react-doctor --staged --fail-on warning");
+    expect(packageJson.gitHooks["pre-commit"]).toContain(
+      "react-doctor --staged --blocking warning",
+    );
   });
 
   it("updates ghooks config", () => {
@@ -533,7 +535,7 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
     expect(target.kind).toBe("ghooks");
     expect(packageJson.config.ghooks["pre-commit"]).toContain("pnpm lint");
     expect(packageJson.config.ghooks["pre-commit"]).toContain(
-      "react-doctor --staged --fail-on warning",
+      "react-doctor --staged --blocking warning",
     );
   });
 
@@ -576,7 +578,7 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
     expect(target.kind).toBe("git-hooks-js");
     expect(packageJson["git-hooks"]["pre-commit"]).toContain("pnpm lint");
     expect(packageJson["git-hooks"]["pre-commit"]).toContain(
-      "react-doctor --staged --fail-on warning",
+      "react-doctor --staged --blocking warning",
     );
   });
 
@@ -610,7 +612,7 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
     expect(target.kind).toBe("pre-commit-npm");
     expect(packageJson["pre-commit"]).toHaveLength(2);
     expect(packageJson["pre-commit"][0]).toBe("lint");
-    expect(packageJson["pre-commit"][1]).toContain("react-doctor --staged --fail-on warning");
+    expect(packageJson["pre-commit"][1]).toContain("react-doctor --staged --blocking warning");
   });
 
   it("does not treat lint-staged as a hook manager by itself", () => {
@@ -666,7 +668,9 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
       path.join(fixture.projectRoot, "package.json"),
     );
     expect(target.kind).toBe("pretty-quick");
-    expect(packageJson.gitHooks["pre-commit"]).toContain("react-doctor --staged --fail-on warning");
+    expect(packageJson.gitHooks["pre-commit"]).toContain(
+      "react-doctor --staged --blocking warning",
+    );
   });
 
   it("runs through a configured hooks directory during a real git commit", () => {
@@ -710,7 +714,7 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
     expect(target.hookPath).toBe(
       path.join(fs.realpathSync(fixture.projectRoot), ".githooks/pre-commit"),
     );
-    expect(fs.readFileSync(invocationPath, "utf8")).toBe("--staged\n--fail-on\nwarning\n");
+    expect(fs.readFileSync(invocationPath, "utf8")).toBe("--staged\n--blocking\nwarning\n");
   });
 
   it("prints a minimal non-invasive prompt during a real git commit", () => {
@@ -759,7 +763,7 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
     expect(commitResult.status).toBe(0);
     expect(commitResult.stderr).toContain("React Doctor found staged regressions.");
     expect(commitResult.stderr).toContain(
-      "Run react-doctor --staged --fail-on warning to inspect.",
+      "Run react-doctor --staged --blocking warning to inspect.",
     );
     expect(commitResult.stderr).toContain(
       "Want them fixed? Ask your agent to run that command and resolve the findings.",
@@ -767,7 +771,7 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
     expect(commitResult.stderr).not.toContain("noisy stdout diagnostic");
     expect(commitResult.stderr).not.toContain("noisy stderr diagnostic");
     expect(commitResult.stderr).not.toContain("Stop commit");
-    expect(fs.readFileSync(invocationPath, "utf8")).toBe("--staged\n--fail-on\nwarning\n");
+    expect(fs.readFileSync(invocationPath, "utf8")).toBe("--staged\n--blocking\nwarning\n");
     expect(
       execFileSync("git", ["rev-parse", "--verify", "HEAD"], {
         cwd: fixture.projectRoot,
@@ -810,7 +814,7 @@ describe.skipIf(process.platform === "win32")("installReactDoctorGitHook", () =>
       encoding: "utf8",
     });
 
-    expect(fs.readFileSync(invocationPath, "utf8")).toBe("--staged\n--fail-on\nwarning\n");
+    expect(fs.readFileSync(invocationPath, "utf8")).toBe("--staged\n--blocking\nwarning\n");
     expect(fs.readFileSync(path.join(fixture.projectRoot, "existing-hook-ran.txt"), "utf8")).toBe(
       "existing-hook\n",
     );

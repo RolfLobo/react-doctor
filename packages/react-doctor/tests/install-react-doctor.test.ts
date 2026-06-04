@@ -578,7 +578,7 @@ describe("runInstallReactDoctor", () => {
     expect(
       fs.existsSync(path.join(fixture.projectRoot, ".agents/skills/react-doctor/SKILL.md")),
     ).toBe(true);
-    expect(fs.readFileSync(hookPath, "utf8")).toContain("react-doctor --staged --fail-on warning");
+    expect(fs.readFileSync(hookPath, "utf8")).toContain("react-doctor --staged --blocking warning");
     expect(fs.existsSync(path.join(fixture.projectRoot, ".react-doctor/hooks/pre-commit"))).toBe(
       false,
     );
@@ -728,7 +728,7 @@ describe("runInstallReactDoctor", () => {
 
     expect(
       fs.readFileSync(path.join(fixture.projectRoot, ".git/hooks/pre-commit"), "utf8"),
-    ).toContain("react-doctor --staged --fail-on warning");
+    ).toContain("react-doctor --staged --blocking warning");
     expect(fs.existsSync(path.join(fixture.projectRoot, ".react-doctor/hooks/pre-commit"))).toBe(
       false,
     );

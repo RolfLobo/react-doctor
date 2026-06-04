@@ -114,6 +114,10 @@ describe("buildRunEventAttributes", () => {
   });
 
   it("rolls up diagnostics by severity, rule, and category", () => {
+    // Pin the gate to `none` so the error diagnostic below doesn't flip the
+    // outcome to "blocked" (default `blocking` is `error`); this test is
+    // about the rollups, not the gate.
+    process.env[ACTION_INPUT_ENVIRONMENT_VARIABLES.blocking] = "none";
     const result = buildResult({
       diagnostics: [
         buildDiagnostic({ severity: "error", rule: "no-foo", category: "Performance" }),
@@ -142,18 +146,18 @@ describe("buildRunEventAttributes", () => {
     expect(attributes.scoreAvailable).toBe(true);
   });
 
-  it("flags a blocking run when the action fail-on gate would trip", () => {
-    process.env[ACTION_INPUT_ENVIRONMENT_VARIABLES.failOn] = "error";
+  it("flags a blocking run when the action blocking gate would trip", () => {
+    process.env[ACTION_INPUT_ENVIRONMENT_VARIABLES.blocking] = "error";
     const result = buildResult({ diagnostics: [buildDiagnostic({ severity: "error" })] });
     const attributes = buildRunEventAttributes(baseInput({ result }));
-    expect(attributes.failOn).toBe("error");
+    expect(attributes.blocking).toBe("error");
     expect(attributes.wouldBlock).toBe(true);
     expect(attributes.outcome).toBe("blocked");
     expect(attributes.exitCode).toBe(1);
   });
 
   it("derives wouldBlock from the CI-failure surface, not the full diagnostic list", () => {
-    process.env[ACTION_INPUT_ENVIRONMENT_VARIABLES.failOn] = "error";
+    process.env[ACTION_INPUT_ENVIRONMENT_VARIABLES.blocking] = "error";
     const result = buildResult({
       diagnostics: [buildDiagnostic({ severity: "error", rule: "no-foo" })],
     });
@@ -174,7 +178,7 @@ describe("buildRunEventAttributes", () => {
   });
 
   it("never reports a blocked run in score-only mode (matches the CLI exit guard)", () => {
-    process.env[ACTION_INPUT_ENVIRONMENT_VARIABLES.failOn] = "error";
+    process.env[ACTION_INPUT_ENVIRONMENT_VARIABLES.blocking] = "error";
     const result = buildResult({ diagnostics: [buildDiagnostic({ severity: "error" })] });
     // A normal run with these findings blocks...
     expect(buildRunEventAttributes(baseInput({ result })).wouldBlock).toBe(true);
@@ -198,13 +202,35 @@ describe("buildRunEventAttributes", () => {
     expect(attributes.totalDiagnostics).toBeUndefined();
   });
 
+  it("emits the baseline delta on a computed baseline run", () => {
+    const result = buildResult({
+      diagnostics: [buildDiagnostic(), buildDiagnostic({ filePath: "src/B.tsx" })],
+      baselineDelta: { baseRef: "abc1234", fixedCount: 3, baseTotalCount: 7 },
+    });
+    const attributes = buildRunEventAttributes(baseInput({ result, mode: "baseline" }));
+    expect(attributes["baseline.new"]).toBe(2);
+    expect(attributes["baseline.fixed"]).toBe(3);
+    expect(attributes["baseline.baseTotal"]).toBe(7);
+    expect(attributes["baseline.degraded"]).toBe(false);
+  });
+
+  it("marks a degraded baseline run, omits the delta, and never blocks", () => {
+    const result = buildResult({ diagnostics: [buildDiagnostic({ severity: "error" })] });
+    const attributes = buildRunEventAttributes(
+      baseInput({ result, mode: "diff", gateExempt: true }),
+    );
+    expect(attributes["baseline.degraded"]).toBe(true);
+    expect(attributes["baseline.new"]).toBeUndefined();
+    expect(attributes["baseline.fixed"]).toBeUndefined();
+    // Gate-exempt: the degraded run never blocks even with an error finding.
+    expect(attributes.wouldBlock).toBe(false);
+  });
+
   it("captures forwarded action knobs and classifies the version pin", () => {
-    process.env[ACTION_INPUT_ENVIRONMENT_VARIABLES.nonBlocking] = "true";
-    process.env[ACTION_INPUT_ENVIRONMENT_VARIABLES.annotations] = "false";
+    process.env[ACTION_INPUT_ENVIRONMENT_VARIABLES.reviewComments] = "false";
     process.env[ACTION_INPUT_ENVIRONMENT_VARIABLES.version] = "latest";
     const attributes = buildRunEventAttributes(baseInput({ result: buildResult() }));
-    expect(attributes.nonBlocking).toBe(true);
-    expect(attributes.annotations).toBe(false);
+    expect(attributes.reviewComments).toBe(false);
     expect(attributes.versionPin).toBe("latest");
     // `comment` env not set -> dropped, never coerced to a value.
     expect(attributes.comment).toBeUndefined();
