@@ -29,6 +29,8 @@ review-*.md
 !/.agents/skills/deslop/**
 !/.agents/skills/ship/
 !/.agents/skills/ship/**
+!/.agents/skills/copywriting/
+!/.agents/skills/copywriting/**
 
 # Local-only: rule-catalog generators and per-rule prompts. The generated
 # `rules.json` and the prompts themselves live in the (private) evals repo;
