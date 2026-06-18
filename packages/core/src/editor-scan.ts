@@ -10,6 +10,7 @@ import { layerOtlp } from "./observability.js";
 import { isProjectDiscoveryError } from "./project-info/index.js";
 import { OxlintConcurrency } from "./refs.js";
 import { runInspect } from "./run-inspect.js";
+import { messageFromUnknown } from "./utils/message-from-unknown.js";
 import { Config } from "./services/config.js";
 import { DeadCode } from "./services/dead-code.js";
 import { Files } from "./services/files.js";
@@ -165,7 +166,16 @@ export const runEditorScan = async (input: EditorScanInput): Promise<EditorScanR
     // REACT_DOCTOR_OTLP_AUTH_HEADER are set; when they are, every
     // `runInspect` / `Service.method` span from this scan is exported,
     // giving editor scans the same observability as the CLI.
-  }).pipe(Effect.provide(layers), Effect.provide(layerOtlp));
+  }).pipe(
+    // Parent span for the whole editor scan (grandparent of `runInspect`'s
+    // own span). Placed before the provides so the OTLP tracer layer is in
+    // scope; only booleans are attributed so no scanned path leaks.
+    Effect.withSpan("runEditorScan", {
+      attributes: { "editor.lint": lint, "editor.runDeadCode": runDeadCode },
+    }),
+    Effect.provide(layers),
+    Effect.provide(layerOtlp),
+  );
 
   const exit = await Effect.runPromiseExit(program);
 
@@ -206,6 +216,6 @@ export const runEditorScan = async (input: EditorScanInput): Promise<EditorScanR
     didDeadCodeFail: false,
     deadCodeFailureReason: null,
     lintPartialFailures: [],
-    error: error instanceof Error ? error.message : String(error),
+    error: messageFromUnknown(error),
   };
 };

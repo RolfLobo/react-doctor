@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { listSourceFiles, resolveNodeForOxlint } from "@react-doctor/core";
+import { listSourceFiles, messageFromUnknown, resolveNodeForOxlint } from "@react-doctor/core";
 import {
   CodeActionKind,
   CodeActionTriggerKind,
@@ -410,9 +410,7 @@ export const createServer = (
         if (outcome.request.priority === "background") scanTelemetry.accumulate(outcome);
       },
       onError: (error, request) =>
-        logger.error(
-          `Scan of ${request.projectDirectory} threw: ${error instanceof Error ? error.message : String(error)}`,
-        ),
+        logger.error(`Scan of ${request.projectDirectory} threw: ${messageFromUnknown(error)}`),
       onIdleChange: (idle) => {
         void setBusy(!idle);
         // The scheduler draining is the reliable "burst settled" signal

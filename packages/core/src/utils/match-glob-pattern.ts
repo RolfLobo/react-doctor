@@ -1,5 +1,6 @@
 import picomatch from "picomatch";
 import { MAX_GLOB_PATTERN_LENGTH_CHARS, MAX_GLOB_PATTERN_WILDCARD_COUNT } from "../constants.js";
+import { messageFromUnknown } from "./message-from-unknown.js";
 
 export class InvalidGlobPatternError extends Error {
   public readonly pattern: string;
@@ -56,10 +57,7 @@ export const compileGlobPattern = (rawPattern: string): RegExp => {
   try {
     return picomatch.makeRe(normalizeGlobPattern(rawPattern), PICOMATCH_OPTIONS);
   } catch (caughtError) {
-    throw new InvalidGlobPatternError(
-      rawPattern,
-      caughtError instanceof Error ? caughtError.message : String(caughtError),
-    );
+    throw new InvalidGlobPatternError(rawPattern, messageFromUnknown(caughtError));
   }
 };
 
