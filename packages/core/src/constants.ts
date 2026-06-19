@@ -361,6 +361,34 @@ export const COMPILER_CLEANUP_RULE_KEYS: ReadonlySet<string> = new Set([
   "react-doctor/react-compiler-no-manual-memoization",
 ]);
 
+// Rules whose repeated findings in one file collapse to a single root-cause
+// fix, so presentation + consumer surfaces can count them as one task instead
+// of N (the state-on-prop-change family: several `useEffect`s deriving,
+// adjusting, or resetting state when a prop changes all clear with one
+// structural fix — a `key` prop or computing during render). `assignFixGroups`
+// stamps a shared `fixGroupId` on same-(file, rule, message) findings of these
+// rules. The allowlist is the safeguard: for an arbitrary rule the same message
+// can mean genuinely separate fixes (a missing `key` on three different
+// `.map()`s), so only rules where "same message ⇒ same fix" opt in here. Rules
+// whose message interpolates a per-site name (`no-derived-state` etc.) stay
+// listed but naturally only group the sites that share the exact message.
+export const ROOT_CAUSE_GROUPABLE_RULE_KEYS: ReadonlySet<string> = new Set([
+  "react-doctor/no-derived-state",
+  "react-doctor/no-derived-state-effect",
+  "react-doctor/no-derived-useState",
+  "react-doctor/no-adjust-state-on-prop-change",
+  "react-doctor/no-reset-all-state-on-prop-change",
+]);
+
+// Minimum findings that must share a root cause before they form a fix group:
+// a lone finding is already its own task, so it never gets a `fixGroupId`.
+export const MIN_SHARED_FIX_SITE_COUNT = 2;
+
+// Length of the hex `fixGroupId` slice (sha1 of file + rule + message). Long
+// enough to avoid collisions within one report, short enough to stay readable
+// in the JSON output.
+export const FIX_GROUP_ID_LENGTH_CHARS = 16;
+
 // How many of the highest-priority error rules to surface in the
 // "Top N errors you should fix" header above the category breakdown.
 export const TOP_ERRORS_DISPLAY_COUNT = 3;
