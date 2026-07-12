@@ -85,6 +85,129 @@ describe("react-builtins/no-multi-comp — regressions", () => {
     );
   });
 
+  it("does not treat a shadowed memo function as a React export wrapper", () => {
+    expectFail(
+      `const memo = (_component) => 0;
+       function Alpha() { return <div />; }
+       function Beta() { return <div />; }
+       function GridComponent() { return <div />; }
+       export const Grid = memo(GridComponent);`,
+    );
+  });
+
+  it("does not treat a non-React memo import as a React export wrapper", () => {
+    expectFail(
+      `import { memo } from "./not-react";
+       function Alpha() { return <div />; }
+       function Beta() { return <div />; }
+       function GridComponent() { return <div />; }
+       export const Grid = memo(GridComponent);`,
+    );
+  });
+
+  // React-compat runtimes (preact/compat, @wordpress/element) re-export
+  // React's own memo/forwardRef — their HoC wrappers must behave exactly
+  // like imports from "react" in both directions.
+  it("traces a memo export wrapper imported from a React-compat runtime", () => {
+    expectPass(
+      `import { memo } from "preact/compat";
+       function RowCard() { return <div />; }
+       function HeaderCard() { return <div />; }
+       function GridComponent() { return <div><RowCard /><HeaderCard /></div>; }
+       export const Grid = memo(GridComponent);`,
+    );
+  });
+
+  it("counts memo-wrapped components imported from a React-compat runtime", () => {
+    expectFail(
+      `import { memo } from "@wordpress/element";
+       const Alpha = memo(() => <div />);
+       const Beta = () => <div />;
+       const Gamma = () => <div />;`,
+    );
+  });
+
+  it("does not treat an alias of a shadowed memo function as a React export wrapper", () => {
+    expectFail(
+      `const memo = (_component) => 0;
+       const wrap = memo;
+       function Alpha() { return <div />; }
+       function Beta() { return <div />; }
+       function GridComponent() { return <div />; }
+       export const Grid = wrap(GridComponent);`,
+    );
+  });
+
+  it("traces a namespace-imported React memo alias", () => {
+    expectPass(
+      `import * as React from "react";
+       const wrap = React.memo;
+       const RowCard = () => <div />;
+       const HeaderCard = () => <div />;
+       function GridComponent() { return <div><RowCard /><HeaderCard /></div>; }
+       export const Grid = wrap(GridComponent);`,
+    );
+  });
+
+  it("traces a renamed destructured React memo binding", () => {
+    expectPass(
+      `import * as React from "react";
+       const { memo: wrap } = React;
+       const RowCard = () => <div />;
+       const HeaderCard = () => <div />;
+       function GridComponent() { return <div><RowCard /><HeaderCard /></div>; }
+       export const Grid = wrap(GridComponent);`,
+    );
+  });
+
+  it("does not treat a shadowed React namespace as an export wrapper", () => {
+    expectFail(
+      `const React = { memo: (_component) => 0 };
+       function Alpha() { return <div />; }
+       function Beta() { return <div />; }
+       function GridComponent() { return <div />; }
+       export const Grid = React.memo(GridComponent);`,
+    );
+  });
+
+  it("detects components wrapped by destructured CommonJS React memo", () => {
+    expectFail(
+      `const { memo } = require("react");
+       const Alpha = memo(() => <div />);
+       const Beta = () => <div />;
+       const Gamma = () => <div />;`,
+    );
+  });
+
+  it("traces a CommonJS React memo binding", () => {
+    expectPass(
+      `const memo = require("react").memo;
+       const RowCard = () => <div />;
+       const HeaderCard = () => <div />;
+       function GridComponent() { return <div><RowCard /><HeaderCard /></div>; }
+       export const Grid = memo(GridComponent);`,
+    );
+  });
+
+  it("traces a CommonJS React namespace", () => {
+    expectPass(
+      `const React = require("react");
+       const RowCard = () => <div />;
+       const HeaderCard = () => <div />;
+       function GridComponent() { return <div><RowCard /><HeaderCard /></div>; }
+       export const Grid = React.memo(GridComponent);`,
+    );
+  });
+
+  it("detects components wrapped by a TypeScript import-equals React namespace", () => {
+    expectFail(
+      `import React = require("react");
+       const Alpha = React.memo(() => <div />);
+       const Beta = () => <div />;
+       const Gamma = () => <div />;`,
+    );
+  });
+
   // Production FP sweep: compound components export their root through a
   // TS cast (`export default SplitButton as SplitButtonComponent`).
   it("unwraps TS casts when resolving a default-exported component name", () => {

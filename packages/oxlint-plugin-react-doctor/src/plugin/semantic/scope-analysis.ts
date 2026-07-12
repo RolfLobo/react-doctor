@@ -692,6 +692,13 @@ const walk = (node: EsTreeNode, state: BuilderState): void => {
     }
     // The function NODE belongs to the parent scope; its body belongs
     // to the function's own scope. Map the node before pushing.
+    const functionParams = (node as { params: ReadonlyArray<EsTreeNode> }).params ?? [];
+    for (const param of functionParams) {
+      if (!("decorators" in param) || !Array.isArray(param.decorators)) continue;
+      for (const decorator of param.decorators) {
+        if (isAstNode(decorator)) walk(decorator, state);
+      }
+    }
     setNodeScope(node, state);
     const kind: ScopeKind = node.type === "ArrowFunctionExpression" ? "arrow-function" : "function";
     const fnScope = pushScope(kind, node, state);
@@ -711,7 +718,6 @@ const walk = (node: EsTreeNode, state: BuilderState): void => {
       });
       tagAsBinding(state, node.id as EsTreeNode);
     }
-    const functionParams = (node as { params: ReadonlyArray<EsTreeNode> }).params ?? [];
     handleFunctionParameters(functionParams, fnScope, state);
     // Record references inside parameter default values and computed
     // destructuring keys (the handler above binds names but doesn't walk
@@ -730,6 +736,11 @@ const walk = (node: EsTreeNode, state: BuilderState): void => {
     // pushing the class's own scope.
     if (isNodeOfType(node, "ClassDeclaration") && node.id) {
       handleClassDeclaration(node, state);
+    }
+    if (Array.isArray(node.decorators)) {
+      for (const decorator of node.decorators) {
+        if (isAstNode(decorator)) walk(decorator, state);
+      }
     }
     // Class scope is its own — class methods see the class name
     // (FunctionExpression-like for ClassExpression).

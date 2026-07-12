@@ -6,6 +6,8 @@ import { scanByPattern } from "./utils/scan-by-pattern.js";
 const MCP_IMPORT_PATTERN =
   /\bfrom\s+["']@modelcontextprotocol\/sdk[^"']*["']|\bMcpServer\b|\bMcpAgent\b/;
 
+const MCP_IMPORT_PREFILTER_PATTERN = /@modelcontextprotocol\/sdk|\bMcpServer\b|\bMcpAgent\b/;
+
 // Only TOOL handlers are the capability surface: a tool runs model-controlled
 // actions with the client's authority. `new McpServer()`/`McpAgent()` is just
 // construction (and is already the file-level import signal), tool LISTING
@@ -15,6 +17,8 @@ const MCP_IMPORT_PATTERN =
 const MCP_TOOL_SURFACE_PATTERN =
   /\bserver\.\s*tool\s*\(|\bregisterTool\s*\(|\bsetRequestHandler\s*\(\s*CallToolRequestSchema/;
 
+const MCP_TOOL_SURFACE_PREFILTER_PATTERN = /\b(?:tool|registerTool|setRequestHandler)\b/;
+
 export const mcpToolCapabilityRisk = defineRule({
   id: "mcp-tool-capability-risk",
   title: "MCP tool exposes dangerous capability",
@@ -22,7 +26,11 @@ export const mcpToolCapabilityRisk = defineRule({
   recommendation:
     "MCP tool calls run with the connecting client's authority. Validate inputs, enforce per-tool authorization, and avoid raw filesystem/shell/network access where possible.",
   scan: scanByPattern({
-    shouldScan: (file) => isProductionSourcePath(file.relativePath),
+    shouldScan: (file) =>
+      isProductionSourcePath(file.relativePath) &&
+      MCP_IMPORT_PREFILTER_PATTERN.test(file.content) &&
+      MCP_TOOL_SURFACE_PREFILTER_PATTERN.test(file.content) &&
+      AGENT_TOOL_DANGEROUS_CAPABILITY_PATTERN.test(file.content),
     pattern: MCP_TOOL_SURFACE_PATTERN,
     requireAll: [MCP_IMPORT_PATTERN, AGENT_TOOL_DANGEROUS_CAPABILITY_PATTERN],
     // Same prose trap as the agent sibling: a capability word in a tool's

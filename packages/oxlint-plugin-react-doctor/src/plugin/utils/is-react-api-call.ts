@@ -1,3 +1,4 @@
+import { REACT_RUNTIME_MODULE_SOURCES } from "../constants/react.js";
 import type { ScopeAnalysis, SymbolDescriptor } from "../semantic/scope-analysis.js";
 import type { EsTreeNode } from "./es-tree-node.js";
 import { getImportedName } from "./get-imported-name.js";
@@ -13,13 +14,14 @@ export interface ReactApiCallOptions {
 const includesApiName = (apiNames: string | ReadonlySet<string>, apiName: string): boolean =>
   typeof apiNames === "string" ? apiNames === apiName : apiNames.has(apiName);
 
-const isImportedFromReact = (symbol: SymbolDescriptor): boolean => {
+export const isImportedFromReact = (symbol: SymbolDescriptor): boolean => {
   if (symbol.kind !== "import") return false;
   const importDeclaration = symbol.declarationNode.parent;
   return Boolean(
     importDeclaration &&
     isNodeOfType(importDeclaration, "ImportDeclaration") &&
-    importDeclaration.source.value === "react",
+    typeof importDeclaration.source.value === "string" &&
+    REACT_RUNTIME_MODULE_SOURCES.has(importDeclaration.source.value),
   );
 };
 
@@ -35,7 +37,7 @@ const isNamedReactApiImport = (
   return Boolean(importedName && includesApiName(apiNames, importedName));
 };
 
-const isReactNamespaceImport = (identifier: EsTreeNode, scopes: ScopeAnalysis): boolean => {
+export const isReactNamespaceImport = (identifier: EsTreeNode, scopes: ScopeAnalysis): boolean => {
   const symbol = resolveConstIdentifierAlias(identifier, scopes);
   if (!symbol || !isImportedFromReact(symbol)) return false;
   return (

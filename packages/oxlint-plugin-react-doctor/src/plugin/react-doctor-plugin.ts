@@ -15,9 +15,9 @@ import { wrapWithSemanticContext } from "./utils/wrap-with-semantic-context.js";
 // same gate — it just lands in its bucket directory and the registry
 // takes care of the rest. Other rules pass through unchanged.
 //
-// Then wraps EVERY rule with the semantic-context wrapper, which
-// builds a scope tree and CFG for the file lazily on first access.
-// Rules that never read `context.scopes` / `context.cfg` pay nothing.
+// Every rule then gets the lazy scope-tree and CFG wrapper — the analyses
+// build on first `context.scopes` / `context.cfg` access and are memoized
+// per Program, so rules that never read them pay only the root capture.
 const applyFrameworkGate = (rule: Rule): Rule => {
   if (rule.framework === "react-native") return wrapReactNativeRule(rule);
   if (rule.framework === "nextjs") return wrapNextjsRule(rule);

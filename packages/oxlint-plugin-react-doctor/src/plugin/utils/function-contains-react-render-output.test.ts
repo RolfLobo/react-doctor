@@ -53,6 +53,27 @@ describe("functionContainsReactRenderOutput", () => {
     expect(functionContainsReactRenderOutput(functionNode, scopes)).toBe(false);
   });
 
+  it("does not cross assigned nested-function boundaries", () => {
+    const { functionNode, scopes } = parseFunctionFixture(
+      `function Card() {
+        const renderLater = () => <div>later</div>;
+        return renderLater;
+      }`,
+      "Card",
+    );
+    expect(functionContainsReactRenderOutput(functionNode, scopes)).toBe(false);
+  });
+
+  it("includes call-argument function render output behind TypeScript wrappers", () => {
+    const { functionNode, scopes } = parseFunctionFixture(
+      `function Card(items: string[]) {
+        return items.map((item) => (<div>{item}</div> as React.ReactElement));
+      }`,
+      "Card",
+    );
+    expect(functionContainsReactRenderOutput(functionNode, scopes)).toBe(true);
+  });
+
   const createElementCases: CreateElementRenderTestCase[] = [
     {
       name: "renamed named React imports",

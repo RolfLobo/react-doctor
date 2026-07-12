@@ -101,23 +101,23 @@ export const wrapWithSemanticContext = (rule: Rule): HostRule => ({
     };
 
     const visitors = rule.create(enrichedContext);
-    const passthroughVisitors: RuleVisitors = {};
-    for (const [nodeType, handler] of Object.entries(visitors)) {
-      if (typeof handler !== "function") continue;
-      passthroughVisitors[nodeType] = handler;
-    }
-
     // Program enter fires before every other visitor, so capturing the root
     // there is enough — wrapping every visitor of every rule in a
     // capture-then-forward closure added a call per (node × rule) for
-    // nothing. A handler that somehow ran without a Program visit falls back
-    // to the conservative stubs above, same as before capture happened.
-    const innerProgramHandler = passthroughVisitors.Program;
-    passthroughVisitors.Program = ((node: EsTreeNode) => {
-      programRoot = node;
-      if (innerProgramHandler) innerProgramHandler(node);
-    }) as RuleVisitors[string];
-
-    return passthroughVisitors;
+    // nothing. Every rule gets the capture: rules can consume
+    // `context.scopes` through shared helpers and factories, so no static
+    // marker can tell the consumers apart reliably, and the capture itself
+    // is one call per rule per file. A handler that somehow ran without a
+    // Program visit falls back to the conservative stubs above.
+    // Copy instead of mutating: `create` may return a shared visitors
+    // object (e.g. a module-level empty-visitors constant).
+    const innerProgramHandler = visitors.Program;
+    return {
+      ...visitors,
+      Program: ((node: EsTreeNode) => {
+        programRoot = node;
+        if (innerProgramHandler) innerProgramHandler(node);
+      }) as RuleVisitors[string],
+    };
   },
 });

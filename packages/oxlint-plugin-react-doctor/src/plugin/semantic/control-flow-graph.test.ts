@@ -188,6 +188,19 @@ describe("control-flow-graph", () => {
       ).toBe(true);
     });
 
+    it("builds a CFG on demand for a function in a default parameter", () => {
+      const analysis = analyze(`
+        function outer(callback = () => {
+          insideDefault();
+        }) {}
+      `);
+      const callNode = findCalleeNode(analysis.program, "insideDefault")!;
+      const owner = analysis.enclosingFunction(callNode)!;
+
+      expect(analysis.cfgFor(owner)).not.toBeNull();
+      expect(analysis.isUnconditionalFromEntry(callNode)).toBe(true);
+    });
+
     it("switch case body is conditional", () => {
       const analysis = analyze(`
         function fn(x) {
@@ -237,6 +250,18 @@ describe("control-flow-graph", () => {
       expect(cfg!.blocks.length).toBeGreaterThan(0);
       expect(cfg!.entry).toBeDefined();
       expect(cfg!.exit).toBeDefined();
+    });
+
+    it("skips host function declarations without bodies", () => {
+      const parsed = parseFixture("function declared() {}");
+      const programBody = (parsed.program as unknown as { body: EsTreeNode[] }).body;
+      const declaration = programBody[0];
+      Reflect.set(declaration, "body", null);
+      attachParentReferences(parsed.program);
+
+      const analysis = analyzeControlFlow(parsed.program);
+
+      expect(analysis.cfgFor(declaration)).toBeNull();
     });
   });
 });

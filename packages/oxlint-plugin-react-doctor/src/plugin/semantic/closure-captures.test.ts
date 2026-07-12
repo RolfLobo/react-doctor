@@ -108,6 +108,76 @@ describe("closureCaptures", () => {
     expect(closureCaptures(useOuter, scopes)).toEqual([]);
   });
 
+  it("preserves source order across nested scopes", () => {
+    const { scopes, program } = analyze(`
+      const firstValue = 1;
+      const nestedValue = 2;
+      const lastValue = 3;
+      const callback = () => {
+        consume(firstValue);
+        const nested = () => nestedValue;
+        consume(lastValue);
+        return nested;
+      };
+    `);
+    const callback = findFunctionNode(program, "callback")!;
+    const captures = closureCaptures(callback, scopes);
+
+    expect(captures.map((capture) => capture.resolvedSymbol?.name)).toEqual([
+      "firstValue",
+      "nestedValue",
+      "lastValue",
+    ]);
+  });
+
+  it("captures runtime references in decorators", () => {
+    const { scopes, program } = analyze(`
+      const decorate = (value) => (target) => target;
+      const decoratorValue = "value";
+      const callback = () => {
+        @decorate(decoratorValue)
+        class Decorated {}
+        return Decorated;
+      };
+    `);
+    const callback = findFunctionNode(program, "callback")!;
+
+    expect(capturedNames(closureCaptures(callback, scopes))).toEqual([
+      "decorate",
+      "decoratorValue",
+    ]);
+  });
+
+  it("captures runtime references in parameter decorators", () => {
+    const { scopes, program } = analyze(`
+      const decorateParameter = () => {};
+      const callback = () => {
+        class Decorated {
+          method(@decorateParameter value: string) {
+            return value;
+          }
+        }
+        return Decorated;
+      };
+    `);
+    const callback = findFunctionNode(program, "callback")!;
+
+    expect(capturedNames(closureCaptures(callback, scopes))).toEqual(["decorateParameter"]);
+  });
+
+  it("does not capture references from type-only syntax", () => {
+    const { scopes, program } = analyze(`
+      const runtimeValue = 1;
+      const callback = () => {
+        type RuntimeValue = typeof runtimeValue;
+        return 1;
+      };
+    `);
+    const callback = findFunctionNode(program, "callback")!;
+
+    expect(closureCaptures(callback, scopes)).toEqual([]);
+  });
+
   it("excludes globals (unresolved references)", () => {
     const { scopes, program } = analyze(`
       const report = () => {
