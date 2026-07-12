@@ -339,6 +339,37 @@ const doMatchingNodesCoverEveryPathAfterUsage = (
   return matchingBlocks.size > 0;
 };
 
+const doMatchingNodesCoverEveryPathFromFunctionEntry = (
+  owner: EsTreeNode,
+  matchingNodes: ReadonlyArray<EsTreeNode>,
+  context: RuleContext,
+): boolean => {
+  const functionCfg = context.cfg.cfgFor(owner);
+  if (!functionCfg) return false;
+  const matchingBlocks = new Set(
+    matchingNodes.flatMap((matchingNode) => {
+      if (context.cfg.enclosingFunction(matchingNode) !== owner) return [];
+      const matchingBlock = functionCfg.blockOf(matchingNode);
+      return matchingBlock ? [matchingBlock] : [];
+    }),
+  );
+  if (matchingBlocks.size === 0) return false;
+  const visitedBlocks = new Set([functionCfg.entry]);
+  const pendingBlocks = [functionCfg.entry];
+  while (pendingBlocks.length > 0) {
+    const currentBlock = pendingBlocks.pop();
+    if (!currentBlock) break;
+    if (matchingBlocks.has(currentBlock)) continue;
+    for (const edge of currentBlock.successors) {
+      if (edge.to === functionCfg.exit) return false;
+      if (visitedBlocks.has(edge.to)) continue;
+      visitedBlocks.add(edge.to);
+      pendingBlocks.push(edge.to);
+    }
+  }
+  return true;
+};
+
 // A resource registered and then released SYNCHRONOUSLY later in the same
 // effect body (`const socket = new WebSocket(url); …; socket.close();`,
 // `observer.observe(el); measure(); observer.disconnect();`) never outlives
@@ -790,6 +821,206 @@ const doesCleanupFunctionReleaseUsage = (
   return didCleanupFunctionMatch;
 };
 
+const doesBoundCleanupReleaseUsage = (
+  expression: EsTreeNode,
+  usage: SubscribeLikeUsage,
+  context: RuleContext,
+): boolean => {
+  const callExpression = stripParenExpression(expression);
+  if (!isNodeOfType(callExpression, "CallExpression")) return false;
+  const bindCallee = stripParenExpression(callExpression.callee);
+  if (
+    !isNodeOfType(bindCallee, "MemberExpression") ||
+    bindCallee.computed ||
+    !isNodeOfType(bindCallee.property, "Identifier") ||
+    bindCallee.property.name !== "bind"
+  ) {
+    return false;
+  }
+  const releaseMember = stripParenExpression(bindCallee.object);
+  if (
+    !isNodeOfType(releaseMember, "MemberExpression") ||
+    releaseMember.computed ||
+    !isNodeOfType(releaseMember.property, "Identifier")
+  ) {
+    return false;
+  }
+  const releaseReceiverKey = resolveExpressionKey(releaseMember.object, context);
+  if (
+    releaseReceiverKey === null ||
+    releaseReceiverKey !== resolveExpressionKey(callExpression.arguments?.[0], context)
+  ) {
+    return false;
+  }
+  const releaseVerbName = releaseMember.property.name;
+  if (usage.kind === "socket") {
+    return (
+      usage.handleKey === releaseReceiverKey &&
+      (SOCKET_RELEASE_VERB_NAMES.has(releaseVerbName) ||
+        UNIVERSAL_RELEASE_VERB_NAMES.has(releaseVerbName))
+    );
+  }
+  return (
+    usage.kind === "subscribe" &&
+    usage.handleKey === releaseReceiverKey &&
+    (releaseVerbName === "unsubscribe" ||
+      releaseVerbName === "unsub" ||
+      releaseVerbName === "close" ||
+      releaseVerbName === "unwatch" ||
+      releaseVerbName === "unlisten" ||
+      BOUND_RESOURCE_RELEASE_METHOD_NAMES.has(releaseVerbName))
+  );
+};
+
+const callbackReturnsCleanupForUsage = (
+  callback: EsTreeNode,
+  usage: SubscribeLikeUsage,
+  context: RuleContext,
+): boolean => {
+  if (
+    !isNodeOfType(callback, "ArrowFunctionExpression") &&
+    !isNodeOfType(callback, "FunctionExpression")
+  ) {
+    return false;
+  }
+  const doesReturnedValueReleaseUsage = (returnedValue: EsTreeNode): boolean => {
+    if (doesBoundCleanupReleaseUsage(returnedValue, usage, context)) return true;
+    const cleanupFunction = resolveStableValue(returnedValue, context);
+    if (cleanupFunction && doesBoundCleanupReleaseUsage(cleanupFunction, usage, context)) {
+      return true;
+    }
+    return Boolean(
+      cleanupFunction &&
+      isFunctionLike(cleanupFunction) &&
+      doesCleanupFunctionReleaseUsage(cleanupFunction, usage, context),
+    );
+  };
+  if (!isNodeOfType(callback.body, "BlockStatement")) {
+    return doesReturnedValueReleaseUsage(stripParenExpression(callback.body));
+  }
+  const matchingCleanupReturns: EsTreeNode[] = [];
+  walkInsideStatementBlocks(callback.body, (child: EsTreeNode) => {
+    if (
+      isNodeOfType(child, "ReturnStatement") &&
+      child.argument &&
+      doesReturnedValueReleaseUsage(stripParenExpression(child.argument))
+    ) {
+      matchingCleanupReturns.push(child);
+    }
+  });
+  return doMatchingNodesCoverEveryPathFromFunctionEntry(callback, matchingCleanupReturns, context);
+};
+
+const hasRerunReleaseBeforeUsage = (
+  callback: EsTreeNode,
+  usage: SubscribeLikeUsage,
+  context: RuleContext,
+): boolean => {
+  if (
+    (!isNodeOfType(callback, "ArrowFunctionExpression") &&
+      !isNodeOfType(callback, "FunctionExpression")) ||
+    !isNodeOfType(callback.body, "BlockStatement")
+  ) {
+    return false;
+  }
+  const functionCfg = context.cfg.cfgFor(callback);
+  const usageBlock = functionCfg?.blockOf(usage.node);
+  const usageStart = getRangeStart(usage.node);
+  if (!functionCfg || !usageBlock || usageStart === null) return false;
+  const findHandleGuard = (releaseCall: EsTreeNode): EsTreeNode | null => {
+    if (usage.handleKey === null) return null;
+    let ancestor = releaseCall.parent;
+    while (ancestor && ancestor !== callback.body) {
+      if (isNodeOfType(ancestor, "IfStatement")) {
+        return ancestor.alternate === null &&
+          resolveExpressionKey(ancestor.test, context) === usage.handleKey &&
+          getRangeStart(ancestor) !== null &&
+          (getRangeStart(ancestor) ?? usageStart) < usageStart
+          ? ancestor
+          : null;
+      }
+      ancestor = ancestor.parent;
+    }
+    return null;
+  };
+  const matchingReleaseAnchors: EsTreeNode[] = [];
+  walkInsideStatementBlocks(callback.body, (child: EsTreeNode) => {
+    if (!isNodeOfType(child, "CallExpression")) return;
+    const releaseStart = getRangeStart(child);
+    const handleGuard = findHandleGuard(child);
+    if (
+      releaseStart === null ||
+      releaseStart >= usageStart ||
+      (functionCfg.blockOf(child) !== usageBlock && !handleGuard)
+    ) {
+      return;
+    }
+    if (doesReleaseCallMatchUsage(child, usage, context)) {
+      matchingReleaseAnchors.push(handleGuard ?? child);
+      return;
+    }
+    const helperFunction = resolveStableValue(child.callee, context);
+    if (
+      helperFunction &&
+      isFunctionLike(helperFunction) &&
+      doesCleanupFunctionReleaseUsage(helperFunction, usage, context)
+    ) {
+      matchingReleaseAnchors.push(handleGuard ?? child);
+    }
+  });
+  return doMatchingNodesCoverEveryPathFromFunctionEntry(callback, matchingReleaseAnchors, context);
+};
+
+const hasStableUnmountCleanupForUsage = (
+  callback: EsTreeNode,
+  usage: SubscribeLikeUsage,
+  context: RuleContext,
+): boolean => {
+  const componentFunction = findEnclosingFunction(callback);
+  if (
+    !componentFunction ||
+    (!isNodeOfType(componentFunction, "ArrowFunctionExpression") &&
+      !isNodeOfType(componentFunction, "FunctionExpression") &&
+      !isNodeOfType(componentFunction, "FunctionDeclaration"))
+  ) {
+    return false;
+  }
+  let didFindUnmountCleanup = false;
+  walkAst(componentFunction.body, (child: EsTreeNode) => {
+    if (didFindUnmountCleanup) return false;
+    if (
+      !isNodeOfType(child, "CallExpression") ||
+      findEnclosingFunction(child) !== componentFunction
+    ) {
+      return;
+    }
+    if (!isHookCall(child, CLEANUP_EFFECT_HOOK_NAMES)) return;
+    const dependencyList = child.arguments?.[1];
+    if (!isNodeOfType(dependencyList, "ArrayExpression") || dependencyList.elements.length > 0) {
+      return;
+    }
+    const cleanupCallback = getEffectCallback(child);
+    if (
+      cleanupCallback &&
+      cleanupCallback !== callback &&
+      callbackReturnsCleanupForUsage(cleanupCallback, usage, context)
+    ) {
+      didFindUnmountCleanup = true;
+      return false;
+    }
+  });
+  return didFindUnmountCleanup;
+};
+
+const hasSplitLifecycleCleanup = (
+  callback: EsTreeNode,
+  usage: SubscribeLikeUsage,
+  context: RuleContext,
+): boolean =>
+  usage.handleKey !== null &&
+  hasRerunReleaseBeforeUsage(callback, usage, context) &&
+  hasStableUnmountCleanupForUsage(callback, usage, context);
+
 const effectHasCleanupForUsage = (
   callback: EsTreeNode,
   usage: SubscribeLikeUsage,
@@ -822,6 +1053,10 @@ const effectHasCleanupForUsage = (
     if (returnStart !== null && usageStart !== null && returnStart < usageStart) return;
     const returnedValue = child.argument ? stripParenExpression(child.argument) : null;
     if (!returnedValue) return;
+    if (doesBoundCleanupReleaseUsage(returnedValue, usage, context)) {
+      matchingCleanupReturns.push(child);
+      return;
+    }
     if (
       usage.kind === "subscribe" &&
       (returnedValue === usage.node ||
@@ -852,6 +1087,10 @@ const effectHasCleanupForUsage = (
       if (!returnedSymbol?.initializer) return;
     }
     const cleanupFunction = resolveStableValue(returnedValue, context);
+    if (cleanupFunction && doesBoundCleanupReleaseUsage(cleanupFunction, usage, context)) {
+      matchingCleanupReturns.push(child);
+      return;
+    }
     if (!cleanupFunction || !isFunctionLike(cleanupFunction)) return;
     if (doesCleanupFunctionReleaseUsage(cleanupFunction, usage, context)) {
       matchingCleanupReturns.push(child);
@@ -870,7 +1109,10 @@ const findFirstUsageWithoutCleanup = (
   context: RuleContext,
 ): SubscribeLikeUsage | null => {
   for (const usage of usages) {
-    if (!effectHasCleanupForUsage(callback, usage, context)) {
+    if (
+      !effectHasCleanupForUsage(callback, usage, context) &&
+      !hasSplitLifecycleCleanup(callback, usage, context)
+    ) {
       return usage;
     }
   }
