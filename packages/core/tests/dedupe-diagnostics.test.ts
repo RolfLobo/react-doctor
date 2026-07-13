@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { dedupeDiagnostics } from "@react-doctor/core";
 import type { Diagnostic } from "@react-doctor/core";
+import { dedupeRelatedDiagnostics } from "../src/utils/dedupe-related-diagnostics.js";
 
 const buildDiagnostic = (overrides: Partial<Diagnostic> = {}): Diagnostic => ({
   filePath: "src/App.tsx",
@@ -14,6 +15,21 @@ const buildDiagnostic = (overrides: Partial<Diagnostic> = {}): Diagnostic => ({
   category: "State & Effects",
   ...overrides,
 });
+
+const buildNativeHookDiagnostic = (overrides: Partial<Diagnostic> = {}): Diagnostic =>
+  buildDiagnostic({
+    rule: "rules-of-hooks",
+    message: "React Hook is called conditionally",
+    ...overrides,
+  });
+
+const buildCompilerHookDiagnostic = (overrides: Partial<Diagnostic> = {}): Diagnostic =>
+  buildDiagnostic({
+    plugin: "react-hooks-js",
+    rule: "hooks",
+    message: "Hooks must always be called in a consistent order",
+    ...overrides,
+  });
 
 describe("dedupeDiagnostics", () => {
   it("returns an empty array for an empty input", () => {
@@ -51,6 +67,84 @@ describe("dedupeDiagnostics", () => {
     expect(dedupeDiagnostics([stateRule, mirrorRule])).toEqual([stateRule, mirrorRule]);
   });
 
+  it("preserves overlapping related derived-state rules (cross-rule collapse happens post-pipeline)", () => {
+    const generic = buildDiagnostic({ rule: "no-derived-state", offset: 100, length: 12 });
+    const propChange = buildDiagnostic({
+      rule: "no-adjust-state-on-prop-change",
+      offset: 100,
+      length: 12,
+    });
+    expect(dedupeDiagnostics([generic, propChange])).toEqual([generic, propChange]);
+  });
+
+  it("keeps the React Doctor rules-of-hooks diagnostic when the compiler reports the same site", () => {
+    const reactDoctorDiagnostic = buildNativeHookDiagnostic();
+    const compilerDiagnostic = buildCompilerHookDiagnostic();
+
+    expect(dedupeRelatedDiagnostics([compilerDiagnostic, reactDoctorDiagnostic])).toEqual([
+      reactDoctorDiagnostic,
+    ]);
+    expect(dedupeRelatedDiagnostics([reactDoctorDiagnostic, compilerDiagnostic])).toEqual([
+      reactDoctorDiagnostic,
+    ]);
+  });
+
+  it("preserves compiler Hook findings at a nearby distinct site", () => {
+    const reactDoctorDiagnostic = buildNativeHookDiagnostic({ column: 5 });
+    const compilerDiagnostic = buildCompilerHookDiagnostic({ column: 20 });
+
+    expect(dedupeRelatedDiagnostics([reactDoctorDiagnostic, compilerDiagnostic])).toEqual([
+      reactDoctorDiagnostic,
+      compilerDiagnostic,
+    ]);
+  });
+
+  it("preserves standalone compiler Hook findings", () => {
+    const compilerDiagnostic = buildCompilerHookDiagnostic();
+
+    expect(dedupeRelatedDiagnostics([compilerDiagnostic])).toEqual([compilerDiagnostic]);
+  });
+
+  it("preserves native Hook findings when the compiler is disabled", () => {
+    const reactDoctorDiagnostic = buildNativeHookDiagnostic();
+
+    expect(dedupeRelatedDiagnostics([reactDoctorDiagnostic])).toEqual([reactDoctorDiagnostic]);
+  });
+
+  it("preserves unrelated compiler diagnostics at the same site", () => {
+    const reactDoctorDiagnostic = buildNativeHookDiagnostic();
+    const compilerDiagnostic = buildDiagnostic({
+      plugin: "react-hooks-js",
+      rule: "set-state-in-effect",
+      message: "Calling setState synchronously within an effect can trigger cascading renders",
+    });
+
+    expect(dedupeRelatedDiagnostics([reactDoctorDiagnostic, compilerDiagnostic])).toEqual([
+      reactDoctorDiagnostic,
+      compilerDiagnostic,
+    ]);
+  });
+
+  it("preserves compiler Hook findings in a different file at the same position", () => {
+    const reactDoctorDiagnostic = buildNativeHookDiagnostic();
+    const compilerDiagnostic = buildCompilerHookDiagnostic({ filePath: "src/Other.tsx" });
+
+    expect(dedupeRelatedDiagnostics([reactDoctorDiagnostic, compilerDiagnostic])).toEqual([
+      reactDoctorDiagnostic,
+      compilerDiagnostic,
+    ]);
+  });
+
+  it("preserves compiler Hook findings on a different line at the same column", () => {
+    const reactDoctorDiagnostic = buildNativeHookDiagnostic({ line: 10 });
+    const compilerDiagnostic = buildCompilerHookDiagnostic({ line: 20 });
+
+    expect(dedupeRelatedDiagnostics([reactDoctorDiagnostic, compilerDiagnostic])).toEqual([
+      reactDoctorDiagnostic,
+      compilerDiagnostic,
+    ]);
+  });
+
   it("keeps the most specific derived-state owner at one write", () => {
     const generic = buildDiagnostic({ rule: "no-derived-state", offset: 100, length: 12 });
     const effect = buildDiagnostic({
@@ -63,13 +157,48 @@ describe("dedupeDiagnostics", () => {
       offset: 100,
       length: 12,
     });
-    expect(dedupeDiagnostics([effect, generic, propChange])).toEqual([propChange]);
+    expect(dedupeRelatedDiagnostics([effect, generic, propChange])).toEqual([propChange]);
   });
 
   it("keeps mount initialization ahead of generic derived-state rules", () => {
     const generic = buildDiagnostic({ rule: "no-derived-state", offset: 100, length: 12 });
     const mount = buildDiagnostic({ rule: "no-initialize-state", offset: 100, length: 12 });
-    expect(dedupeDiagnostics([generic, mount])).toEqual([mount]);
+    expect(dedupeRelatedDiagnostics([generic, mount])).toEqual([mount]);
+  });
+
+  it("carries an escalated error severity onto the surviving derived-state winner", () => {
+    const escalatedFallback = buildDiagnostic({
+      rule: "no-derived-state",
+      severity: "error",
+      offset: 100,
+      length: 12,
+    });
+    const preferredWarning = buildDiagnostic({
+      rule: "no-adjust-state-on-prop-change",
+      severity: "warning",
+      offset: 100,
+      length: 12,
+    });
+    const expected = [{ ...preferredWarning, severity: "error" }];
+    expect(dedupeRelatedDiagnostics([escalatedFallback, preferredWarning])).toEqual(expected);
+    expect(dedupeRelatedDiagnostics([preferredWarning, escalatedFallback])).toEqual(expected);
+  });
+
+  it("keeps the winner's severity when the collapsed sibling is not escalated", () => {
+    const fallbackWarning = buildDiagnostic({
+      rule: "no-derived-state",
+      severity: "warning",
+      offset: 100,
+      length: 12,
+    });
+    const preferredError = buildDiagnostic({
+      rule: "no-adjust-state-on-prop-change",
+      severity: "error",
+      offset: 100,
+      length: 12,
+    });
+    expect(dedupeRelatedDiagnostics([fallbackWarning, preferredError])).toEqual([preferredError]);
+    expect(dedupeRelatedDiagnostics([preferredError, fallbackWarning])).toEqual([preferredError]);
   });
 
   it("preserves separate writes inside one overlapping effect diagnostic", () => {
@@ -89,7 +218,10 @@ describe("dedupeDiagnostics", () => {
       length: 12,
       column: 20,
     });
-    expect(dedupeDiagnostics([effect, firstWrite, secondWrite])).toEqual([firstWrite, secondWrite]);
+    expect(dedupeRelatedDiagnostics([effect, firstWrite, secondWrite])).toEqual([
+      firstWrite,
+      secondWrite,
+    ]);
   });
 
   it("preserves diagnostics with different messages at the same location and rule", () => {
