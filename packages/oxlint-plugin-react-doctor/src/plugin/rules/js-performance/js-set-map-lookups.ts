@@ -4,12 +4,16 @@ import { collectPatternNames } from "../../utils/collect-pattern-names.js";
 import { defineRule } from "../../utils/define-rule.js";
 import type { EsTreeNode } from "../../utils/es-tree-node.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
+import { findProgramRoot } from "../../utils/find-program-root.js";
 import { findVariableInitializer } from "../../utils/find-variable-initializer.js";
+import { getRangeStart } from "../../utils/get-range-start.js";
 import { isInlineFunctionExpression } from "../../utils/is-inline-function-expression.js";
+import { isFunctionLike } from "../../utils/is-function-like.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import type { RuleContext } from "../../utils/rule-context.js";
 import type { RuleVisitors } from "../../utils/rule-visitors.js";
 import { stripParenExpression } from "../../utils/strip-paren-expression.js";
+import { walkAst } from "../../utils/walk-ast.js";
 
 // HACK: methods that ALWAYS return a string when called on a string
 // receiver. Used to recognize `.toLowerCase().includes(x)` chains as
@@ -543,6 +547,73 @@ const isNegativeOneLiteral = (expression: EsTreeNode | null | undefined): boolea
 const isZeroLiteral = (expression: EsTreeNode | null | undefined): boolean =>
   Boolean(expression) && isNodeOfType(expression, "Literal") && expression.value === 0;
 
+const isToIntegerOrInfinityZero = (value: number): boolean =>
+  Number.isNaN(value) || Math.trunc(value) === 0;
+
+const isZeroFromIndex = (expression: EsTreeNode | null | undefined): boolean => {
+  if (!expression) return false;
+  const strippedExpression = stripParenExpression(expression);
+  if (isNodeOfType(strippedExpression, "Literal")) {
+    if (typeof strippedExpression.value === "number") {
+      return isToIntegerOrInfinityZero(strippedExpression.value);
+    }
+    if (typeof strippedExpression.value === "string") {
+      const numericValue = Number(strippedExpression.value);
+      return isToIntegerOrInfinityZero(numericValue);
+    }
+    return strippedExpression.value === null || strippedExpression.value === false;
+  }
+  if (
+    isNodeOfType(strippedExpression, "UnaryExpression") &&
+    strippedExpression.operator === "void"
+  ) {
+    return true;
+  }
+  if (
+    isNodeOfType(strippedExpression, "UnaryExpression") &&
+    (strippedExpression.operator === "-" || strippedExpression.operator === "+") &&
+    isNodeOfType(strippedExpression.argument, "Literal") &&
+    typeof strippedExpression.argument.value === "number"
+  ) {
+    const numericValue =
+      strippedExpression.operator === "-"
+        ? -strippedExpression.argument.value
+        : strippedExpression.argument.value;
+    return isToIntegerOrInfinityZero(numericValue);
+  }
+  if (isNodeOfType(strippedExpression, "Identifier")) {
+    return (
+      (strippedExpression.name === "undefined" || strippedExpression.name === "NaN") &&
+      findVariableInitializer(strippedExpression, strippedExpression.name) === null
+    );
+  }
+  return (
+    isNodeOfType(strippedExpression, "MemberExpression") &&
+    !strippedExpression.computed &&
+    isNodeOfType(strippedExpression.object, "Identifier") &&
+    strippedExpression.object.name === "Number" &&
+    isNodeOfType(strippedExpression.property, "Identifier") &&
+    strippedExpression.property.name === "NaN" &&
+    findVariableInitializer(strippedExpression.object, strippedExpression.object.name) === null
+  );
+};
+
+const hasSemanticsPreservingIncludesArguments = (
+  node: EsTreeNodeOfType<"CallExpression">,
+): boolean => {
+  if (node.arguments.length === 1) {
+    return !isNodeOfType(node.arguments[0], "SpreadElement");
+  }
+  if (node.arguments.length !== 2) return false;
+  if (
+    isNodeOfType(node.arguments[0], "SpreadElement") ||
+    isNodeOfType(node.arguments[1], "SpreadElement")
+  ) {
+    return false;
+  }
+  return isZeroFromIndex(node.arguments[1]);
+};
+
 const PARENT_WRAPPER_TYPES: ReadonlySet<string> = new Set([
   "ParenthesizedExpression",
   "ChainExpression",
@@ -551,10 +622,6 @@ const PARENT_WRAPPER_TYPES: ReadonlySet<string> = new Set([
   "TSNonNullExpression",
 ]);
 
-// A `Set` has no `indexOf`, so the rewrite only exists when the result
-// is consumed as a membership test (`!== -1`, `>= 0`, `~`-prefixed).
-// A result kept as a position (`columnHeights.indexOf(Math.min(...))`)
-// has no Set equivalent and must stay silent.
 const isIndexOfResultUsedAsMembershipTest = (node: EsTreeNodeOfType<"CallExpression">): boolean => {
   let parent: EsTreeNode | null | undefined = node.parent;
   while (parent && PARENT_WRAPPER_TYPES.has(parent.type)) {
@@ -568,8 +635,755 @@ const isIndexOfResultUsedAsMembershipTest = (node: EsTreeNodeOfType<"CallExpress
   const rightOperand = parent.right as EsTreeNode;
   const otherOperand = stripParenExpression(leftOperand) === node ? rightOperand : leftOperand;
   if (isNegativeOneLiteral(otherOperand)) return true;
-  // `indexOf(x) >= 0` is membership; `indexOf(x) === 0` is a prefix check.
   return isZeroLiteral(otherOperand) && (parent.operator === ">=" || parent.operator === "<");
+};
+
+const getTypeAnnotation = (node: EsTreeNode | null | undefined): EsTreeNode | null => {
+  if (!node || !("typeAnnotation" in node)) return null;
+  const annotation = node.typeAnnotation;
+  if (!annotation || !isNodeOfType(annotation, "TSTypeAnnotation")) return null;
+  return annotation.typeAnnotation;
+};
+
+const getDeclaredPropertyType = (
+  members: ReadonlyArray<EsTreeNode>,
+  propertyName: string,
+): EsTreeNode | null => {
+  for (const member of members) {
+    if (
+      isNodeOfType(member, "TSPropertySignature") &&
+      isNodeOfType(member.key, "Identifier") &&
+      member.key.name === propertyName
+    ) {
+      return getTypeAnnotation(member);
+    }
+  }
+  return null;
+};
+
+const getArrayElementType = (typeNode: EsTreeNode | null): EsTreeNode | null => {
+  if (!typeNode) return null;
+  if (isNodeOfType(typeNode, "TSArrayType")) return typeNode.elementType;
+  if (
+    isNodeOfType(typeNode, "TSTypeReference") &&
+    isNodeOfType(typeNode.typeName, "Identifier") &&
+    (typeNode.typeName.name === "Array" || typeNode.typeName.name === "ReadonlyArray")
+  ) {
+    return typeNode.typeArguments?.params?.[0] ?? null;
+  }
+  if (isNodeOfType(typeNode, "TSUnionType")) {
+    const arrayElementTypes = typeNode.types.map(getArrayElementType).filter(Boolean);
+    return arrayElementTypes.length === 1 ? arrayElementTypes[0] : null;
+  }
+  return null;
+};
+
+const getDestructuredDeclaredType = (
+  identifier: EsTreeNodeOfType<"Identifier">,
+): EsTreeNode | null => {
+  const binding = findVariableInitializer(identifier, identifier.name);
+  if (!binding) return null;
+  const property = binding.bindingIdentifier.parent;
+  const objectPattern = property?.parent;
+  if (
+    !isNodeOfType(property, "Property") ||
+    !isNodeOfType(property.key, "Identifier") ||
+    !isNodeOfType(objectPattern, "ObjectPattern")
+  ) {
+    return null;
+  }
+  const propsType = getTypeAnnotation(objectPattern);
+  if (!propsType) return null;
+  if (isNodeOfType(propsType, "TSTypeLiteral")) {
+    return getDeclaredPropertyType(propsType.members ?? [], property.key.name);
+  }
+  if (
+    !isNodeOfType(propsType, "TSTypeReference") ||
+    !isNodeOfType(propsType.typeName, "Identifier")
+  ) {
+    return null;
+  }
+  const program = findProgramRoot(identifier);
+  if (!program) return null;
+  for (const statement of program.body) {
+    const declaration = isNodeOfType(statement, "ExportNamedDeclaration")
+      ? statement.declaration
+      : statement;
+    if (
+      isNodeOfType(declaration, "TSInterfaceDeclaration") &&
+      isNodeOfType(declaration.id, "Identifier") &&
+      declaration.id.name === propsType.typeName.name
+    ) {
+      return getDeclaredPropertyType(declaration.body.body, property.key.name);
+    }
+    if (
+      isNodeOfType(declaration, "TSTypeAliasDeclaration") &&
+      isNodeOfType(declaration.id, "Identifier") &&
+      declaration.id.name === propsType.typeName.name &&
+      isNodeOfType(declaration.typeAnnotation, "TSTypeLiteral")
+    ) {
+      return getDeclaredPropertyType(declaration.typeAnnotation.members ?? [], property.key.name);
+    }
+  }
+  return null;
+};
+
+const getIdentifierDeclaredType = (
+  identifier: EsTreeNodeOfType<"Identifier">,
+  visitedBindingIdentifiers: Set<EsTreeNode> = new Set(),
+): EsTreeNode | null => {
+  const binding = findVariableInitializer(identifier, identifier.name);
+  if (!binding || visitedBindingIdentifiers.has(binding.bindingIdentifier)) return null;
+  visitedBindingIdentifiers.add(binding.bindingIdentifier);
+  const directType = getTypeAnnotation(binding.bindingIdentifier);
+  if (directType) return directType;
+  const initializer = binding.initializer;
+  if (
+    isNodeOfType(initializer, "TSAsExpression") ||
+    isNodeOfType(initializer, "TSTypeAssertion") ||
+    isNodeOfType(initializer, "TSSatisfiesExpression")
+  ) {
+    return initializer.typeAnnotation;
+  }
+  const destructuredType = getDestructuredDeclaredType(identifier);
+  if (destructuredType) return destructuredType;
+  const declarator = binding.bindingIdentifier.parent;
+  const declaration = declarator?.parent;
+  const forOfStatement = declaration?.parent;
+  if (
+    isNodeOfType(declarator, "VariableDeclarator") &&
+    isNodeOfType(declaration, "VariableDeclaration") &&
+    isNodeOfType(forOfStatement, "ForOfStatement") &&
+    forOfStatement.left === declaration &&
+    isNodeOfType(forOfStatement.right, "Identifier")
+  ) {
+    return getArrayElementType(
+      getIdentifierDeclaredType(forOfStatement.right, visitedBindingIdentifiers),
+    );
+  }
+  return null;
+};
+
+const isNativeIterationIndex = (identifier: EsTreeNodeOfType<"Identifier">): boolean => {
+  const binding = findVariableInitializer(identifier, identifier.name);
+  if (!binding) return false;
+  const callback = binding.bindingIdentifier.parent;
+  if (!isInlineFunctionExpression(callback)) return false;
+  const callbackCall = callback.parent;
+  if (
+    !isNodeOfType(callbackCall, "CallExpression") ||
+    !isIterationCallbackCall(callbackCall) ||
+    !isNodeOfType(callbackCall.callee, "MemberExpression") ||
+    !isNodeOfType(callbackCall.callee.property, "Identifier")
+  ) {
+    return false;
+  }
+  const indexParameterPosition =
+    callbackCall.callee.property.name === "reduce" ||
+    callbackCall.callee.property.name === "reduceRight"
+      ? 2
+      : 1;
+  return callback.params?.[indexParameterPosition] === binding.bindingIdentifier;
+};
+
+const hasSameIdentifierBinding = (
+  leftIdentifier: EsTreeNodeOfType<"Identifier">,
+  rightIdentifier: EsTreeNodeOfType<"Identifier">,
+): boolean => {
+  if (leftIdentifier.name !== rightIdentifier.name) return false;
+  const leftBinding = findVariableInitializer(leftIdentifier, leftIdentifier.name);
+  const rightBinding = findVariableInitializer(rightIdentifier, rightIdentifier.name);
+  return Boolean(
+    leftBinding && rightBinding && leftBinding.bindingIdentifier === rightBinding.bindingIdentifier,
+  );
+};
+
+const NON_NAN_RELATIONAL_OPERATORS: ReadonlySet<string> = new Set(["<", "<=", ">", ">="]);
+
+const testProvesIdentifierIsNotNaN = (
+  test: EsTreeNode | null | undefined,
+  identifier: EsTreeNodeOfType<"Identifier">,
+): boolean => {
+  if (!test) return false;
+  const strippedTest = stripParenExpression(test);
+  if (isNodeOfType(strippedTest, "LogicalExpression") && strippedTest.operator === "&&") {
+    return (
+      testProvesIdentifierIsNotNaN(strippedTest.left, identifier) ||
+      testProvesIdentifierIsNotNaN(strippedTest.right, identifier)
+    );
+  }
+  if (
+    !isNodeOfType(strippedTest, "BinaryExpression") ||
+    !NON_NAN_RELATIONAL_OPERATORS.has(strippedTest.operator)
+  ) {
+    return false;
+  }
+  return (
+    (isNodeOfType(strippedTest.left, "Identifier") &&
+      hasSameIdentifierBinding(strippedTest.left, identifier)) ||
+    (isNodeOfType(strippedTest.right, "Identifier") &&
+      hasSameIdentifierBinding(strippedTest.right, identifier))
+  );
+};
+
+const writeTargetContainsIdentifierBinding = (
+  writeTarget: EsTreeNode,
+  identifier: EsTreeNodeOfType<"Identifier">,
+): boolean => {
+  let containsBinding = false;
+  walkAst(writeTarget, (child) => {
+    if (isNodeOfType(child, "Identifier") && hasSameIdentifierBinding(child, identifier)) {
+      containsBinding = true;
+      return false;
+    }
+  });
+  return containsBinding;
+};
+
+const hasWriteBeforeQuery = (
+  body: EsTreeNode,
+  identifier: EsTreeNodeOfType<"Identifier">,
+): boolean => {
+  const queryStart = getRangeStart(identifier);
+  if (queryStart === null) return true;
+  let hasEarlierWrite = false;
+  walkAst(body, (child) => {
+    if (hasEarlierWrite) return false;
+    const childStart = getRangeStart(child);
+    if (childStart !== null && childStart >= queryStart) return false;
+    if (child !== body && isFunctionLike(child)) return false;
+    const writeTarget = isNodeOfType(child, "AssignmentExpression")
+      ? child.left
+      : isNodeOfType(child, "UpdateExpression")
+        ? child.argument
+        : isNodeOfType(child, "ForInStatement") || isNodeOfType(child, "ForOfStatement")
+          ? child.left
+          : null;
+    if (writeTarget && writeTargetContainsIdentifierBinding(writeTarget, identifier)) {
+      hasEarlierWrite = true;
+      return false;
+    }
+  });
+  return hasEarlierWrite;
+};
+
+const isProtectedByRelationalLoopGuard = (identifier: EsTreeNodeOfType<"Identifier">): boolean => {
+  let descendant: EsTreeNode = identifier;
+  let ancestor: EsTreeNode | null | undefined = identifier.parent;
+  while (ancestor) {
+    if (isFunctionLike(ancestor)) return false;
+    if (
+      (isNodeOfType(ancestor, "ForStatement") || isNodeOfType(ancestor, "WhileStatement")) &&
+      ancestor.body === descendant &&
+      testProvesIdentifierIsNotNaN(ancestor.test, identifier)
+    ) {
+      return !hasWriteBeforeQuery(ancestor.body, identifier);
+    }
+    descendant = ancestor;
+    ancestor = ancestor.parent;
+  }
+  return false;
+};
+
+const isKnownSafeIndexOfQuery = (query: EsTreeNode | null | undefined): boolean => {
+  if (!query) return false;
+  const strippedQuery = stripParenExpression(query);
+  if (isNodeOfType(strippedQuery, "Literal")) {
+    return typeof strippedQuery.value !== "number" || Number.isFinite(strippedQuery.value);
+  }
+  if (!isNodeOfType(strippedQuery, "Identifier")) return false;
+  if (isNativeIterationIndex(strippedQuery)) return true;
+  return isProtectedByRelationalLoopGuard(strippedQuery);
+};
+
+const findSameFileTypeAlias = (
+  reference: EsTreeNode,
+  typeName: string,
+): EsTreeNodeOfType<"TSTypeAliasDeclaration"> | null => {
+  const program = findProgramRoot(reference);
+  if (!program) return null;
+  for (const statement of program.body) {
+    const declaration = isNodeOfType(statement, "ExportNamedDeclaration")
+      ? statement.declaration
+      : statement;
+    if (
+      declaration &&
+      isNodeOfType(declaration, "TSTypeAliasDeclaration") &&
+      isNodeOfType(declaration.id, "Identifier") &&
+      declaration.id.name === typeName
+    ) {
+      return declaration;
+    }
+  }
+  return null;
+};
+
+const hasDeclaredMembershipMethod = (
+  members: ReadonlyArray<EsTreeNode>,
+  methodName: string,
+): boolean =>
+  members.some(
+    (member) =>
+      (isNodeOfType(member, "TSMethodSignature") || isNodeOfType(member, "TSPropertySignature")) &&
+      isNodeOfType(member.key, "Identifier") &&
+      member.key.name === methodName,
+  );
+
+const isKnownUserlandMembershipReceiver = (receiver: EsTreeNode, methodName: string): boolean => {
+  if (!isNodeOfType(receiver, "Identifier")) return false;
+  const declaredType = getIdentifierDeclaredType(receiver);
+  if (!declaredType) return false;
+  if (isNodeOfType(declaredType, "TSTypeLiteral")) {
+    return hasDeclaredMembershipMethod(declaredType.members ?? [], methodName);
+  }
+  if (
+    !isNodeOfType(declaredType, "TSTypeReference") ||
+    !isNodeOfType(declaredType.typeName, "Identifier")
+  ) {
+    return false;
+  }
+  const typeAlias = findSameFileTypeAlias(receiver, declaredType.typeName.name);
+  if (typeAlias && isNodeOfType(typeAlias.typeAnnotation, "TSTypeLiteral")) {
+    return hasDeclaredMembershipMethod(typeAlias.typeAnnotation.members ?? [], methodName);
+  }
+  const program = findProgramRoot(receiver);
+  if (!program) return false;
+  for (const statement of program.body) {
+    const declaration = isNodeOfType(statement, "ExportNamedDeclaration")
+      ? statement.declaration
+      : statement;
+    if (
+      declaration &&
+      isNodeOfType(declaration, "TSInterfaceDeclaration") &&
+      isNodeOfType(declaration.id, "Identifier") &&
+      declaration.id.name === declaredType.typeName.name
+    ) {
+      return hasDeclaredMembershipMethod(declaration.body.body, methodName);
+    }
+  }
+  return false;
+};
+
+const findTypeParameter = (
+  reference: EsTreeNode,
+  typeName: string,
+): EsTreeNodeOfType<"TSTypeParameter"> | null => {
+  let ancestor: EsTreeNode | null | undefined = reference.parent;
+  while (ancestor) {
+    if (
+      isFunctionLike(ancestor) ||
+      isNodeOfType(ancestor, "ClassDeclaration") ||
+      isNodeOfType(ancestor, "ClassExpression")
+    ) {
+      const matchingTypeParameter = ancestor.typeParameters?.params?.find(
+        (typeParameter) =>
+          isNodeOfType(typeParameter, "TSTypeParameter") &&
+          isNodeOfType(typeParameter.name, "Identifier") &&
+          typeParameter.name.name === typeName,
+      );
+      if (matchingTypeParameter && isNodeOfType(matchingTypeParameter, "TSTypeParameter")) {
+        return matchingTypeParameter;
+      }
+    }
+    ancestor = ancestor.parent;
+  }
+  return null;
+};
+
+const POSSIBLY_NUMERIC_TYPE_REFERENCE_NAMES: ReadonlySet<string> = new Set([
+  "NonNullable",
+  "PropertyKey",
+]);
+
+const buildTypeAliasArguments = (
+  typeAlias: EsTreeNodeOfType<"TSTypeAliasDeclaration">,
+  typeReference: EsTreeNodeOfType<"TSTypeReference">,
+  inheritedArguments: ReadonlyMap<string, EsTreeNode>,
+): Map<string, EsTreeNode> => {
+  const typeArguments = new Map(inheritedArguments);
+  for (const [index, typeParameter] of (typeAlias.typeParameters?.params ?? []).entries()) {
+    if (!isNodeOfType(typeParameter, "TSTypeParameter")) continue;
+    if (!isNodeOfType(typeParameter.name, "Identifier")) continue;
+    const argument = typeReference.typeArguments?.params?.[index] ?? typeParameter.default;
+    if (argument) typeArguments.set(typeParameter.name.name, argument);
+  }
+  return typeArguments;
+};
+
+const typeCanHaveSameValueZeroDifference = (
+  typeNode: EsTreeNode | null,
+  reference: EsTreeNode,
+  activeTypeNodes: Set<EsTreeNode>,
+  typeArguments: ReadonlyMap<string, EsTreeNode> = new Map(),
+): boolean => {
+  if (!typeNode) return false;
+  if (
+    isNodeOfType(typeNode, "TSNumberKeyword") ||
+    isNodeOfType(typeNode, "TSAnyKeyword") ||
+    isNodeOfType(typeNode, "TSUnknownKeyword")
+  ) {
+    return true;
+  }
+  if (
+    isNodeOfType(typeNode, "TSStringKeyword") ||
+    isNodeOfType(typeNode, "TSBooleanKeyword") ||
+    isNodeOfType(typeNode, "TSBigIntKeyword") ||
+    isNodeOfType(typeNode, "TSSymbolKeyword") ||
+    isNodeOfType(typeNode, "TSNullKeyword") ||
+    isNodeOfType(typeNode, "TSUndefinedKeyword") ||
+    isNodeOfType(typeNode, "TSObjectKeyword") ||
+    isNodeOfType(typeNode, "TSLiteralType") ||
+    isNodeOfType(typeNode, "TSFunctionType")
+  ) {
+    return false;
+  }
+  if (isNodeOfType(typeNode, "TSTypeLiteral")) {
+    return (typeNode.members?.length ?? 0) === 0;
+  }
+  if (isNodeOfType(typeNode, "TSTypeOperator") && typeNode.operator === "keyof") {
+    return false;
+  }
+  if (isNodeOfType(typeNode, "TSUnionType") || isNodeOfType(typeNode, "TSIntersectionType")) {
+    return typeNode.types.some((memberType) =>
+      typeCanHaveSameValueZeroDifference(memberType, reference, activeTypeNodes, typeArguments),
+    );
+  }
+  if (isNodeOfType(typeNode, "TSOptionalType") || isNodeOfType(typeNode, "TSRestType")) {
+    return typeCanHaveSameValueZeroDifference(
+      typeNode.typeAnnotation,
+      reference,
+      activeTypeNodes,
+      typeArguments,
+    );
+  }
+  if (isNodeOfType(typeNode, "TSNamedTupleMember")) {
+    return typeCanHaveSameValueZeroDifference(
+      typeNode.elementType,
+      reference,
+      activeTypeNodes,
+      typeArguments,
+    );
+  }
+  if (!isNodeOfType(typeNode, "TSTypeReference")) {
+    return true;
+  }
+  if (!isNodeOfType(typeNode.typeName, "Identifier")) return false;
+  const substitutedType = typeArguments.get(typeNode.typeName.name);
+  if (substitutedType) {
+    const remainingArguments = new Map(typeArguments);
+    remainingArguments.delete(typeNode.typeName.name);
+    return typeCanHaveSameValueZeroDifference(
+      substitutedType,
+      reference,
+      activeTypeNodes,
+      remainingArguments,
+    );
+  }
+  const typeParameter = findTypeParameter(reference, typeNode.typeName.name);
+  if (typeParameter) {
+    if (!typeParameter.constraint || activeTypeNodes.has(typeParameter)) return true;
+    activeTypeNodes.add(typeParameter);
+    const constraintCanDiffer = typeCanHaveSameValueZeroDifference(
+      typeParameter.constraint,
+      reference,
+      activeTypeNodes,
+      typeArguments,
+    );
+    activeTypeNodes.delete(typeParameter);
+    return constraintCanDiffer;
+  }
+  const typeAlias = findSameFileTypeAlias(reference, typeNode.typeName.name);
+  if (!typeAlias) {
+    return (
+      POSSIBLY_NUMERIC_TYPE_REFERENCE_NAMES.has(typeNode.typeName.name) ||
+      /(?:number|numeric)/i.test(typeNode.typeName.name)
+    );
+  }
+  if (activeTypeNodes.has(typeAlias)) return true;
+  activeTypeNodes.add(typeAlias);
+  const canDiffer = typeCanHaveSameValueZeroDifference(
+    typeAlias.typeAnnotation,
+    reference,
+    activeTypeNodes,
+    buildTypeAliasArguments(typeAlias, typeNode, typeArguments),
+  );
+  activeTypeNodes.delete(typeAlias);
+  return canDiffer;
+};
+
+const arrayTypeCanHaveSameValueZeroDifference = (
+  typeNode: EsTreeNode | null,
+  reference: EsTreeNode,
+  activeTypeNodes: Set<EsTreeNode>,
+  typeArguments: ReadonlyMap<string, EsTreeNode> = new Map(),
+): boolean => {
+  if (!typeNode) return false;
+  if (isNodeOfType(typeNode, "TSArrayType")) {
+    return typeCanHaveSameValueZeroDifference(
+      typeNode.elementType,
+      reference,
+      activeTypeNodes,
+      typeArguments,
+    );
+  }
+  if (isNodeOfType(typeNode, "TSTupleType")) {
+    return typeNode.elementTypes.some((elementType) => {
+      if (isNodeOfType(elementType, "TSRestType")) {
+        return arrayTypeCanHaveSameValueZeroDifference(
+          elementType.typeAnnotation,
+          reference,
+          activeTypeNodes,
+          typeArguments,
+        );
+      }
+      if (isNodeOfType(elementType, "TSNamedTupleMember")) {
+        return typeCanHaveSameValueZeroDifference(
+          elementType.elementType,
+          reference,
+          activeTypeNodes,
+          typeArguments,
+        );
+      }
+      return typeCanHaveSameValueZeroDifference(
+        elementType,
+        reference,
+        activeTypeNodes,
+        typeArguments,
+      );
+    });
+  }
+  if (isNodeOfType(typeNode, "TSTypeOperator")) {
+    return arrayTypeCanHaveSameValueZeroDifference(
+      typeNode.typeAnnotation ?? null,
+      reference,
+      activeTypeNodes,
+      typeArguments,
+    );
+  }
+  if (isNodeOfType(typeNode, "TSUnionType") || isNodeOfType(typeNode, "TSIntersectionType")) {
+    return typeNode.types.some((memberType) =>
+      arrayTypeCanHaveSameValueZeroDifference(
+        memberType,
+        reference,
+        activeTypeNodes,
+        typeArguments,
+      ),
+    );
+  }
+  if (
+    !isNodeOfType(typeNode, "TSTypeReference") ||
+    !isNodeOfType(typeNode.typeName, "Identifier")
+  ) {
+    return false;
+  }
+  const substitutedType = typeArguments.get(typeNode.typeName.name);
+  if (substitutedType) {
+    const remainingArguments = new Map(typeArguments);
+    remainingArguments.delete(typeNode.typeName.name);
+    return arrayTypeCanHaveSameValueZeroDifference(
+      substitutedType,
+      reference,
+      activeTypeNodes,
+      remainingArguments,
+    );
+  }
+  if (typeNode.typeName.name === "Array" || typeNode.typeName.name === "ReadonlyArray") {
+    return typeCanHaveSameValueZeroDifference(
+      typeNode.typeArguments?.params?.[0] ?? null,
+      reference,
+      activeTypeNodes,
+      typeArguments,
+    );
+  }
+  const typeAlias = findSameFileTypeAlias(reference, typeNode.typeName.name);
+  if (!typeAlias || activeTypeNodes.has(typeAlias)) return false;
+  activeTypeNodes.add(typeAlias);
+  const canDiffer = arrayTypeCanHaveSameValueZeroDifference(
+    typeAlias.typeAnnotation,
+    reference,
+    activeTypeNodes,
+    buildTypeAliasArguments(typeAlias, typeNode, typeArguments),
+  );
+  activeTypeNodes.delete(typeAlias);
+  return canDiffer;
+};
+
+const isKnownArrayType = (
+  typeNode: EsTreeNode | null,
+  reference: EsTreeNode,
+  activeTypeNodes: Set<EsTreeNode>,
+  typeArguments: ReadonlyMap<string, EsTreeNode> = new Map(),
+): boolean => {
+  if (!typeNode) return false;
+  if (isNodeOfType(typeNode, "TSArrayType") || isNodeOfType(typeNode, "TSTupleType")) return true;
+  if (isNodeOfType(typeNode, "TSTypeOperator")) {
+    return isKnownArrayType(
+      typeNode.typeAnnotation ?? null,
+      reference,
+      activeTypeNodes,
+      typeArguments,
+    );
+  }
+  if (isNodeOfType(typeNode, "TSUnionType")) {
+    const nonNullishTypes = typeNode.types.filter(
+      (memberType) =>
+        !isNodeOfType(memberType, "TSNullKeyword") &&
+        !isNodeOfType(memberType, "TSUndefinedKeyword"),
+    );
+    return (
+      nonNullishTypes.length > 0 &&
+      nonNullishTypes.every((memberType) =>
+        isKnownArrayType(memberType, reference, activeTypeNodes, typeArguments),
+      )
+    );
+  }
+  if (isNodeOfType(typeNode, "TSIntersectionType")) {
+    return typeNode.types.some((memberType) =>
+      isKnownArrayType(memberType, reference, activeTypeNodes, typeArguments),
+    );
+  }
+  if (
+    !isNodeOfType(typeNode, "TSTypeReference") ||
+    !isNodeOfType(typeNode.typeName, "Identifier")
+  ) {
+    return false;
+  }
+  const substitutedType = typeArguments.get(typeNode.typeName.name);
+  if (substitutedType) {
+    const remainingArguments = new Map(typeArguments);
+    remainingArguments.delete(typeNode.typeName.name);
+    return isKnownArrayType(substitutedType, reference, activeTypeNodes, remainingArguments);
+  }
+  if (typeNode.typeName.name === "Array" || typeNode.typeName.name === "ReadonlyArray") return true;
+  const typeParameter = findTypeParameter(reference, typeNode.typeName.name);
+  if (typeParameter?.constraint) {
+    if (activeTypeNodes.has(typeParameter)) return false;
+    activeTypeNodes.add(typeParameter);
+    const isConstraintArray = isKnownArrayType(
+      typeParameter.constraint,
+      reference,
+      activeTypeNodes,
+      typeArguments,
+    );
+    activeTypeNodes.delete(typeParameter);
+    return isConstraintArray;
+  }
+  const typeAlias = findSameFileTypeAlias(reference, typeNode.typeName.name);
+  if (!typeAlias || activeTypeNodes.has(typeAlias)) return false;
+  activeTypeNodes.add(typeAlias);
+  const isArray = isKnownArrayType(
+    typeAlias.typeAnnotation,
+    reference,
+    activeTypeNodes,
+    buildTypeAliasArguments(typeAlias, typeNode, typeArguments),
+  );
+  activeTypeNodes.delete(typeAlias);
+  return isArray;
+};
+
+const isKnownNativeArrayReceiver = (receiver: EsTreeNode): boolean => {
+  if (isNodeOfType(receiver, "ArrayExpression")) return true;
+  if (
+    isNodeOfType(receiver, "Identifier") &&
+    isKnownArrayType(getIdentifierDeclaredType(receiver), receiver, new Set())
+  ) {
+    return true;
+  }
+  const initializer = getResolvedInitializer(receiver)?.initializer;
+  if (!initializer) return false;
+  const strippedInitializer = stripParenExpression(initializer);
+  if (isNodeOfType(strippedInitializer, "ArrayExpression")) return true;
+  if (
+    isNodeOfType(strippedInitializer, "NewExpression") &&
+    isNodeOfType(strippedInitializer.callee, "Identifier") &&
+    strippedInitializer.callee.name === "Array" &&
+    findVariableInitializer(strippedInitializer.callee, strippedInitializer.callee.name) === null
+  ) {
+    return true;
+  }
+  return (
+    isNodeOfType(strippedInitializer, "CallExpression") &&
+    isNodeOfType(strippedInitializer.callee, "MemberExpression") &&
+    isNodeOfType(strippedInitializer.callee.object, "Identifier") &&
+    strippedInitializer.callee.object.name === "Array" &&
+    isNodeOfType(strippedInitializer.callee.property, "Identifier") &&
+    (strippedInitializer.callee.property.name === "from" ||
+      strippedInitializer.callee.property.name === "of") &&
+    findVariableInitializer(
+      strippedInitializer.callee.object,
+      strippedInitializer.callee.object.name,
+    ) === null
+  );
+};
+
+const isKnownDenseArrayReceiver = (receiver: EsTreeNode): boolean => {
+  const initializer = isNodeOfType(receiver, "Identifier")
+    ? getResolvedInitializer(receiver)?.initializer
+    : receiver;
+  if (!initializer) return false;
+  const strippedInitializer = stripParenExpression(initializer);
+  if (isNodeOfType(strippedInitializer, "ArrayExpression")) {
+    return (strippedInitializer.elements ?? []).every(
+      (element) => element !== null && !isNodeOfType(element, "SpreadElement"),
+    );
+  }
+  return (
+    isNodeOfType(strippedInitializer, "CallExpression") &&
+    isNodeOfType(strippedInitializer.callee, "MemberExpression") &&
+    isNodeOfType(strippedInitializer.callee.object, "Identifier") &&
+    strippedInitializer.callee.object.name === "Array" &&
+    isNodeOfType(strippedInitializer.callee.property, "Identifier") &&
+    (strippedInitializer.callee.property.name === "from" ||
+      strippedInitializer.callee.property.name === "of") &&
+    findVariableInitializer(
+      strippedInitializer.callee.object,
+      strippedInitializer.callee.object.name,
+    ) === null
+  );
+};
+
+const isKnownUnsafeIndexOfQuery = (
+  query: EsTreeNode | null | undefined,
+  receiver: EsTreeNode,
+): boolean => {
+  if (!query) return true;
+  const strippedQuery = stripParenExpression(query);
+  if (isNodeOfType(strippedQuery, "Identifier")) {
+    if (
+      strippedQuery.name === "undefined" &&
+      findVariableInitializer(strippedQuery, strippedQuery.name) === null
+    ) {
+      return !isKnownDenseArrayReceiver(receiver);
+    }
+    if (
+      strippedQuery.name === "NaN" &&
+      findVariableInitializer(strippedQuery, strippedQuery.name) === null
+    ) {
+      return true;
+    }
+    return typeCanHaveSameValueZeroDifference(
+      getIdentifierDeclaredType(strippedQuery),
+      strippedQuery,
+      new Set(),
+    );
+  }
+  if (isNodeOfType(strippedQuery, "MemberExpression")) {
+    return (
+      !strippedQuery.computed &&
+      isNodeOfType(strippedQuery.object, "Identifier") &&
+      strippedQuery.object.name === "Number" &&
+      isNodeOfType(strippedQuery.property, "Identifier") &&
+      strippedQuery.property.name === "NaN" &&
+      findVariableInitializer(strippedQuery.object, strippedQuery.object.name) === null
+    );
+  }
+  return true;
+};
+
+const isKnownUnsafeIndexOfReceiver = (receiver: EsTreeNode): boolean => {
+  if (!isNodeOfType(receiver, "Identifier")) return false;
+  const declaredType = getIdentifierDeclaredType(receiver);
+  return arrayTypeCanHaveSameValueZeroDifference(declaredType, receiver, new Set());
 };
 
 // `.filter(option => value.includes(option.value))` iterates like a loop —
@@ -768,23 +1582,35 @@ export const jsSetMapLookups = defineRule({
         return;
       const methodName = node.callee.property.name;
       if (methodName !== "includes" && methodName !== "indexOf") return;
-      if (methodName === "indexOf" && !isIndexOfResultUsedAsMembershipTest(node)) return;
+      if (methodName === "includes" && !hasSemanticsPreservingIncludesArguments(node)) return;
+      if (
+        methodName === "indexOf" &&
+        (node.arguments.length !== 1 ||
+          isNodeOfType(node.arguments[0], "SpreadElement") ||
+          !isIndexOfResultUsedAsMembershipTest(node))
+      ) {
+        return;
+      }
       const rawReceiver = node.callee.object;
       if (!rawReceiver) return;
       const receiver = stripParenExpression(rawReceiver);
+      const isKnownNativeArray = isKnownNativeArrayReceiver(receiver);
+      if (isKnownUserlandMembershipReceiver(receiver, methodName)) return;
+      if (methodName === "includes" && node.arguments.length === 2 && !isKnownNativeArray) return;
+      const query = node.arguments[0] as EsTreeNode | undefined;
+      if (
+        methodName === "indexOf" &&
+        !isKnownSafeIndexOfQuery(query) &&
+        (isKnownUnsafeIndexOfQuery(query, receiver) || isKnownUnsafeIndexOfReceiver(receiver))
+      ) {
+        return;
+      }
       if (isLikelyStringReceiver(receiver)) return;
       if (isSmallInlineLiteralArray(receiver)) return;
       if (isScreamingSnakeCaseConstantReceiver(receiver)) return;
       if (isSmallFixedListMember(receiver)) return;
-      if (isSubstringSearchLiteral(node.arguments?.[0] as EsTreeNode | undefined)) return;
-      if (
-        isIndexedArrayElementWithStringArgument(
-          receiver,
-          node.arguments?.[0] as EsTreeNode | undefined,
-        )
-      ) {
-        return;
-      }
+      if (isSubstringSearchLiteral(query)) return;
+      if (isIndexedArrayElementWithStringArgument(receiver, query)) return;
       const resolvedInitializer = getResolvedInitializer(receiver);
       if (resolvedInitializer) {
         if (isLikelyStringReceiver(resolvedInitializer.initializer)) return;
