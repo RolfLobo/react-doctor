@@ -4087,6 +4087,7 @@ export const Component = () => {
     );
     expect(result.parseErrors).toEqual([]);
     expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.message).toContain("without guaranteed cleanup");
   });
 
   it("flags a timer in an unguarded Promise callback with unconditional cleanup", () => {
@@ -4366,5 +4367,1022 @@ export const Component = ({ asyncCall, disabled }) => {
     );
     expect(result.parseErrors).toEqual([]);
     expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it("flags repeated timer assignments to one handle in a Promise callback", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(firstTask, 1000);
+      timeoutId = setTimeout(secondTask, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags competing Promise callbacks that assign the same timer handle", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ firstLoad, secondLoad }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    firstLoad().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(firstTask, 1000);
+    });
+    secondLoad().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(secondTask, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [firstLoad, secondLoad]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags a guarded timer assignment that can repeat in a loop", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, tasks }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      for (const task of tasks) {
+        timeoutId = setTimeout(task, 1000);
+      }
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, tasks]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags a synchronous call that can unmount after the lifecycle guard", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, runBeforeSchedule }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      runBeforeSchedule();
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, runBeforeSchedule]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("accepts a synchronous call before the lifecycle guard is rechecked", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, prepare }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      prepare();
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, prepare]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it("accepts a call confined to the inactive early-return branch", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, logInactive }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) {
+        logInactive();
+        return;
+      }
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, logInactive]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it("accepts a nested call confined to the inactive early-return branch", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ debug, load, logInactive }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) {
+        if (debug) logInactive();
+        return;
+      }
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [debug, load, logInactive]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it("accepts a call confined to an inactive throwing branch", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, makeInactiveError }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) {
+        throw makeInactiveError();
+      }
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, makeInactiveError]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it("flags a conditional call on a path that rejoins before timer allocation", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, prepare, shouldPrepare }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      if (shouldPrepare) prepare();
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, prepare, shouldPrepare]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags a call in the active else branch before timer allocation", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, prepare }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) {
+        return;
+      } else {
+        prepare();
+      }
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, prepare]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("keeps opaque logical-expression calls conservative", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, prepare, shouldPrepare }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      shouldPrepare && prepare();
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, prepare, shouldPrepare]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("ignores an unreachable call after the inactive branch returns", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, unreachableCall }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) {
+        return;
+        unreachableCall();
+      }
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, unreachableCall]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it("flags a partially terminating inactive branch", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ debug, load, logInactive }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) {
+        if (debug) return;
+        logInactive();
+      }
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [debug, load, logInactive]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags an inactive branch whose explicit throw is caught before allocation", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, logInactive }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      try {
+        if (!isActive) {
+          logInactive();
+          throw new Error("inactive");
+        }
+      } catch {}
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, logInactive]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags an inactive call that can throw through a catch before allocation", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, logInactive }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      try {
+        if (!isActive) {
+          logInactive();
+          return;
+        }
+      } catch {}
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, logInactive]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags a potentially interrupting call in the lifecycle guard test", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, prepare }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive || prepare()) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, prepare]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("accepts a terminal call subpath inside a positive lifecycle guard", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ debug, load, logInactive }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (isActive) {
+        if (debug) {
+          logInactive();
+          return;
+        }
+        timeoutId = setTimeout(task, 1000);
+      }
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [debug, load, logInactive]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it("flags a rejoining call branch inside a positive lifecycle guard", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ debug, load, logInactive }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (isActive) {
+        if (debug) logInactive();
+        timeoutId = setTimeout(task, 1000);
+      }
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [debug, load, logInactive]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("does not accept guarded timer allocation inside a loop with continue", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, logInactive, tasks }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      for (const task of tasks) {
+        if (!isActive) {
+          logInactive();
+          continue;
+        }
+        timeoutId = setTimeout(task, 1000);
+        break;
+      }
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, logInactive, tasks]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags a timer argument that can unmount after the lifecycle guard", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ getDelay, load }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, getDelay());
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [getDelay, load]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags a guarded Promise timer stored outside the effect instance", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+let sharedTimeoutId;
+export const Component = ({ load }) => {
+  useEffect(() => {
+    let isActive = true;
+    load().then(() => {
+      if (!isActive) return;
+      sharedTimeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(sharedTimeoutId);
+    };
+  }, [load]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags a guarded Promise timer controlled by shared lifecycle state", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+let isActive = true;
+export const Component = ({ load }) => {
+  useEffect(() => {
+    isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags a lifecycle guard that another callback can reactivate", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, reactivate }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    reactivate(() => {
+      isActive = true;
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, reactivate]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("does not apply the guarded timer proof to a shadowed allocator", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, setTimeout }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load, setTimeout]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("does not apply the guarded timer proof to a shadowed release", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ clearTimeout, load }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [clearTimeout, load]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags cleanup that releases the timer only under an unrelated condition", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, shouldRelease }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      if (shouldRelease) clearTimeout(timeoutId);
+    };
+  }, [load, shouldRelease]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("flags a generator cleanup whose body React never executes", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return function* cleanup() {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [load]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("accepts cleanup guarded by the owned timer handle", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [load]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it.each([
+    { name: "loose null", guard: "timeoutId != null" },
+    { name: "reversed loose null", guard: "null != timeoutId" },
+    { name: "loose undefined", guard: "timeoutId != undefined" },
+    { name: "reversed loose undefined", guard: "undefined != timeoutId" },
+    { name: "strict undefined", guard: "timeoutId !== undefined" },
+    { name: "reversed strict undefined", guard: "undefined !== timeoutId" },
+    { name: "strict null", guard: "timeoutId !== null" },
+    { name: "reversed strict null", guard: "null !== timeoutId" },
+  ])("accepts cleanup guarded by the owned timer handle with $name", ({ guard }) => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      if (${guard}) clearTimeout(timeoutId);
+    };
+  }, [load]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it.each([
+    {
+      name: "loose null equality",
+      parameters: "{ load }",
+      declaration: "",
+      guard: "timeoutId == null",
+    },
+    {
+      name: "reversed strict equality",
+      parameters: "{ load }",
+      declaration: "",
+      guard: "undefined === timeoutId",
+    },
+    {
+      name: "another timer handle",
+      parameters: "{ load }",
+      declaration: "let otherTimeoutId;",
+      guard: "otherTimeoutId != null",
+    },
+    {
+      name: "a shadowed undefined value",
+      parameters: "{ load, undefined }",
+      declaration: "",
+      guard: "timeoutId !== undefined",
+    },
+  ])("rejects cleanup guarded by $name", ({ parameters, declaration, guard }) => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = (${parameters}) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    ${declaration}
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      if (${guard}) clearTimeout(timeoutId);
+    };
+  }, [load]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it.each([
+    {
+      name: "truthy release then target reset",
+      declaration: "",
+      cleanup: "if (timeoutId) clearTimeout(timeoutId); timeoutId = null;",
+    },
+    {
+      name: "nullish release then target reset",
+      declaration: "",
+      cleanup: "if (timeoutId !== undefined) clearTimeout(timeoutId); timeoutId = undefined;",
+    },
+    {
+      name: "release and reset inside the owned-handle branch",
+      declaration: "",
+      cleanup: "if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }",
+    },
+    {
+      name: "owned-handle release then unrelated reset",
+      declaration: "let otherTimeoutId;",
+      cleanup: "if (timeoutId) clearTimeout(timeoutId); otherTimeoutId = null;",
+    },
+  ])("accepts guarded cleanup with $name", ({ declaration, cleanup }) => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    ${declaration}
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      ${cleanup}
+    };
+  }, [load]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it("accepts an early return after a guarded release", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, shouldStopCleanup }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        if (shouldStopCleanup) return;
+      }
+    };
+  }, [load, shouldStopCleanup]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it.each([
+    {
+      name: "an early return before release",
+      cleanup: "if (timeoutId) { if (shouldSkipRelease) return; clearTimeout(timeoutId); }",
+    },
+    {
+      name: "a target reset before release in the owned-handle branch",
+      cleanup: "if (timeoutId) { timeoutId = null; clearTimeout(timeoutId); }",
+    },
+    {
+      name: "a conditional target reset before release",
+      cleanup:
+        "if (timeoutId) { if (shouldSkipRelease) timeoutId = null; clearTimeout(timeoutId); }",
+    },
+    {
+      name: "a conditionally skipped release inside the owned-handle branch",
+      cleanup: "if (timeoutId) { if (shouldSkipRelease) return; else clearTimeout(timeoutId); }",
+    },
+  ])("rejects an owned-handle guard with $name", ({ cleanup }) => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, shouldSkipRelease }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      ${cleanup}
+    };
+  }, [load, shouldSkipRelease]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it.each([
+    {
+      name: "target reset before guarded release",
+      declaration: "",
+      cleanup: "timeoutId = null; if (timeoutId) clearTimeout(timeoutId);",
+    },
+    {
+      name: "release nested under an unrelated branch",
+      declaration: "",
+      cleanup: "if (shouldRelease) { if (timeoutId) clearTimeout(timeoutId); } timeoutId = null;",
+    },
+    {
+      name: "release guarded by another handle",
+      declaration: "let otherTimeoutId;",
+      cleanup: "if (otherTimeoutId) clearTimeout(timeoutId); timeoutId = null;",
+    },
+  ])("rejects guarded cleanup with $name", ({ declaration, cleanup }) => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load, shouldRelease }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    ${declaration}
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      ${cleanup}
+    };
+  }, [load, shouldRelease]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  it("accepts clearing and resetting the timer handle during cleanup", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+      timeoutId = undefined;
+    };
+  }, [load]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it("flags resetting the timer handle before cleanup releases it", () => {
+    const result = runRule(
+      effectNeedsCleanup,
+      `import { useEffect } from "react";
+export const Component = ({ load }) => {
+  useEffect(() => {
+    let isActive = true;
+    let timeoutId;
+    load().then(() => {
+      if (!isActive) return;
+      timeoutId = setTimeout(task, 1000);
+    });
+    return () => {
+      isActive = false;
+      timeoutId = undefined;
+      clearTimeout(timeoutId);
+    };
+  }, [load]);
+  return null;
+};`,
+    );
+    expect(result.parseErrors).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
   });
 });
