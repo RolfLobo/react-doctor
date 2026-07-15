@@ -2,6 +2,8 @@ import { defineRule } from "../../utils/define-rule.js";
 import type { RuleContext } from "../../utils/rule-context.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
+import { isProvenFramerMotionJsxElement } from "../../utils/is-proven-framer-motion-jsx-element.js";
+import { getAuthoritativeJsxAttribute } from "../../utils/get-authoritative-jsx-attribute.js";
 
 export const noScaleFromZero = defineRule({
   id: "no-scale-from-zero",
@@ -14,6 +16,15 @@ export const noScaleFromZero = defineRule({
     JSXAttribute(node: EsTreeNodeOfType<"JSXAttribute">) {
       if (!isNodeOfType(node.name, "JSXIdentifier")) return;
       if (node.name.name !== "initial" && node.name.name !== "exit") return;
+      const openingElement = node.parent;
+      if (
+        !openingElement ||
+        !isNodeOfType(openingElement, "JSXOpeningElement") ||
+        !Object.is(getAuthoritativeJsxAttribute(openingElement.attributes, node.name.name), node) ||
+        !isProvenFramerMotionJsxElement(openingElement, context.scopes)
+      ) {
+        return;
+      }
       if (!isNodeOfType(node.value, "JSXExpressionContainer")) return;
 
       const expression = node.value.expression;
