@@ -25,6 +25,8 @@ import { findTransparentExpressionRoot } from "../../utils/find-transparent-expr
 import { getCalleeName } from "../../utils/get-callee-name.js";
 import { getDirectUnreassignedInitializer } from "../../utils/get-direct-unreassigned-initializer.js";
 import { getEffectCallback } from "../../utils/get-effect-callback.js";
+import { getFinalSequenceExpressionValue } from "../../utils/get-final-sequence-expression-value.js";
+import { doNodesCoverEveryPathFromFunctionEntry } from "../../utils/do-nodes-cover-every-path-from-function-entry.js";
 import { getFunctionBindingIdentifier } from "../../utils/get-function-binding-name.js";
 import { getRangeStart } from "../../utils/get-range-start.js";
 import { getStaticPropertyKeyName } from "../../utils/get-static-property-key-name.js";
@@ -54,6 +56,7 @@ import { resolveEventListenerCapture } from "./utils/resolve-event-listener-capt
 import { isFunctionLike } from "../../utils/is-function-like.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import { isNodeReachableWithinFunction } from "../../utils/is-node-reachable-within-function.js";
+import { isWithinAssignmentTarget } from "../../utils/is-within-assignment-target.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
 import type { SymbolDescriptor } from "../../semantic/scope-analysis.js";
 
@@ -601,37 +604,6 @@ const doMatchingNodesCoverEveryPathAfterUsage = (
   return matchingBlocks.size > 0;
 };
 
-const doMatchingNodesCoverEveryPathFromFunctionEntry = (
-  owner: EsTreeNode,
-  matchingNodes: ReadonlyArray<EsTreeNode>,
-  context: RuleContext,
-): boolean => {
-  const functionCfg = context.cfg.cfgFor(owner);
-  if (!functionCfg) return false;
-  const matchingBlocks = new Set(
-    matchingNodes.flatMap((matchingNode) => {
-      if (context.cfg.enclosingFunction(matchingNode) !== owner) return [];
-      const matchingBlock = functionCfg.blockOf(matchingNode);
-      return matchingBlock ? [matchingBlock] : [];
-    }),
-  );
-  if (matchingBlocks.size === 0) return false;
-  const visitedBlocks = new Set([functionCfg.entry]);
-  const pendingBlocks = [functionCfg.entry];
-  while (pendingBlocks.length > 0) {
-    const currentBlock = pendingBlocks.pop();
-    if (!currentBlock) break;
-    if (matchingBlocks.has(currentBlock)) continue;
-    for (const edge of currentBlock.successors) {
-      if (edge.to === functionCfg.exit) return false;
-      if (visitedBlocks.has(edge.to)) continue;
-      visitedBlocks.add(edge.to);
-      pendingBlocks.push(edge.to);
-    }
-  }
-  return true;
-};
-
 // A resource registered and then released SYNCHRONOUSLY later in the same
 // effect body (`const socket = new WebSocket(url); …; socket.close();`,
 // `observer.observe(el); measure(); observer.disconnect();`) never outlives
@@ -1155,28 +1127,6 @@ const findPushedResourceCollectionKey = (
     : null;
 };
 
-const isWithinAssignmentTarget = (identifier: EsTreeNode): boolean => {
-  let currentNode = identifier;
-  let parentNode = currentNode.parent;
-  while (parentNode) {
-    if (isNodeOfType(parentNode, "AssignmentExpression")) {
-      return parentNode.left === currentNode;
-    }
-    if (
-      isNodeOfType(parentNode, "UpdateExpression") ||
-      (isNodeOfType(parentNode, "UnaryExpression") && parentNode.operator === "delete")
-    ) {
-      return parentNode.argument === currentNode;
-    }
-    if (isNodeOfType(parentNode, "ForInStatement") || isNodeOfType(parentNode, "ForOfStatement")) {
-      return parentNode.left === currentNode;
-    }
-    currentNode = parentNode;
-    parentNode = currentNode.parent;
-  }
-  return false;
-};
-
 const resolveStableValue = (
   expression: EsTreeNode | null | undefined,
   context: RuleContext,
@@ -1478,11 +1428,7 @@ const doesCleanupFunctionReleaseUsage = (
   });
   return (
     didCleanupFunctionMatch ||
-    doMatchingNodesCoverEveryPathFromFunctionEntry(
-      cleanupFunction,
-      matchingLoopOrHelperAnchors,
-      context,
-    )
+    doNodesCoverEveryPathFromFunctionEntry(cleanupFunction, matchingLoopOrHelperAnchors, context)
   );
 };
 
@@ -1574,7 +1520,7 @@ const callbackReturnsCleanupForUsage = (
       matchingCleanupReturns.push(child);
     }
   });
-  return doMatchingNodesCoverEveryPathFromFunctionEntry(callback, matchingCleanupReturns, context);
+  return doNodesCoverEveryPathFromFunctionEntry(callback, matchingCleanupReturns, context);
 };
 
 const doesTestRequireLiveExpressionKey = (
@@ -1681,7 +1627,7 @@ const hasRerunReleaseBeforeUsage = (
       matchingReleaseAnchors.push(handleGuard ?? child);
     }
   });
-  return doMatchingNodesCoverEveryPathFromFunctionEntry(callback, matchingReleaseAnchors, context);
+  return doNodesCoverEveryPathFromFunctionEntry(callback, matchingReleaseAnchors, context);
 };
 
 const hasStableUnmountCleanupForUsage = (
@@ -2219,7 +2165,7 @@ const hasGuardedRefOwnedNestedCleanup = (
     !resolveReactRefSymbol(stripParenExpression(usageAssignment.left), context.scopes) ||
     !collectSynchronouslyEffectInvokedFunctions(callback).has(usageFunction) ||
     !cleanupReturnsReleaseUsage(cleanupReturns, usage, context) ||
-    !doMatchingNodesCoverEveryPathFromFunctionEntry(callback, cleanupReturns, context)
+    !doNodesCoverEveryPathFromFunctionEntry(callback, cleanupReturns, context)
   ) {
     return false;
   }
@@ -2330,7 +2276,7 @@ const hasGuardedDeferredCleanup = (
       }
     });
     if (
-      !doMatchingNodesCoverEveryPathFromFunctionEntry(
+      !doNodesCoverEveryPathFromFunctionEntry(
         cleanupFunction,
         globalReleaseProofs.map((releaseProof) => releaseProof.anchor),
         context,
@@ -2870,7 +2816,7 @@ const isReactRefListenerReplacementRelease = (
     doMatchingNodesCoverEveryPathBeforeUsage(assignment, [releaseAnchor], usageFunction, context),
   );
   return (
-    doMatchingNodesCoverEveryPathFromFunctionEntry(usageFunction, [releaseAnchor], context) &&
+    doNodesCoverEveryPathFromFunctionEntry(usageFunction, [releaseAnchor], context) &&
     doMatchingNodesCoverEveryPathBeforeUsage(
       usage.node,
       safeOwnershipAssignments,
@@ -2902,7 +2848,7 @@ const findDirectExhaustiveForEachCleanupFunction = (
       statementNode.parent === ownerFunction.body;
     if (
       (!isDirectConciseBody && !isDirectBlockStatement) ||
-      !doMatchingNodesCoverEveryPathFromFunctionEntry(
+      !doNodesCoverEveryPathFromFunctionEntry(
         ownerFunction,
         [isDirectBlockStatement ? statementNode : currentNode],
         context,
@@ -3061,7 +3007,7 @@ const hasSafeForEachProjectionCleanup = (
     releaseFunction &&
     isFunctionLike(releaseFunction) &&
     isReturnedEffectCleanupFunction(releaseFunction, context) &&
-    doMatchingNodesCoverEveryPathFromFunctionEntry(releaseFunction, [releaseCall], context),
+    doNodesCoverEveryPathFromFunctionEntry(releaseFunction, [releaseCall], context),
   );
   if (
     doesReleaseCoverEveryCleanupPath &&
@@ -3593,7 +3539,7 @@ const hasEffectCleanupInvocation = (
       if (!cleanupFunction || !cleanupFunctionInvokesRef(cleanupFunction)) return;
       matchingReturns.push(child);
     });
-    return doMatchingNodesCoverEveryPathFromFunctionEntry(effectCallback, matchingReturns, context);
+    return doNodesCoverEveryPathFromFunctionEntry(effectCallback, matchingReturns, context);
   };
   let didFindInvocation = false;
   walkAst(componentFunction.body, (child: EsTreeNode) => {
@@ -3718,7 +3664,7 @@ const isSelfReleasingListenerRelease = (
     releaseFunction.async ||
     releaseFunction.generator ||
     !isNodeOfType(releaseFunction.body, "BlockStatement") ||
-    !doMatchingNodesCoverEveryPathFromFunctionEntry(releaseFunction, [releaseNode], context)
+    !doNodesCoverEveryPathFromFunctionEntry(releaseFunction, [releaseNode], context)
   ) {
     return false;
   }
@@ -4203,7 +4149,7 @@ const effectReturnsRefOwnedCleanup = (
       matchingReturns.push(child);
     }
   });
-  return doMatchingNodesCoverEveryPathFromFunctionEntry(effectCallback, matchingReturns, context);
+  return doNodesCoverEveryPathFromFunctionEntry(effectCallback, matchingReturns, context);
 };
 
 const hasGuaranteedRefOwnedUnmountCleanup = (
@@ -4299,16 +4245,6 @@ const findUnconditionalReturnStatement = (
     findEnclosingFunction(returnStatement) === ownerFunction
     ? returnStatement
     : null;
-};
-
-const getFinalSequenceExpressionValue = (expression: EsTreeNode): EsTreeNode => {
-  let finalExpression = stripParenExpression(expression);
-  while (isNodeOfType(finalExpression, "SequenceExpression")) {
-    const sequenceResult = finalExpression.expressions.at(-1);
-    if (!sequenceResult) break;
-    finalExpression = stripParenExpression(sequenceResult);
-  }
-  return finalExpression;
 };
 
 const doesResourceResultEscape = (
@@ -4804,11 +4740,7 @@ const isReactRefCallbackCleanupOwnedByEffect = (
         matchingCalls.push(child);
       }
     });
-    return doMatchingNodesCoverEveryPathFromFunctionEntry(
-      returnedCleanupFunction,
-      matchingCalls,
-      context,
-    );
+    return doNodesCoverEveryPathFromFunctionEntry(returnedCleanupFunction, matchingCalls, context);
   };
   const matchingReturns: EsTreeNode[] = [];
   walkInsideStatementBlocks(retainedFunction.body, (child: EsTreeNode) => {
