@@ -102,6 +102,9 @@ const discoverProjectWithoutPackageJson = (directory: string): ProjectInfo => {
     hasTanStackQuery: false,
     valtioVersion: null,
     valtioMajorVersion: null,
+    hasRemotion: false,
+    remotionVersion: null,
+    remotionMajorVersion: null,
     hasSsrDependency: false,
     preactVersion: null,
     preactMajorVersion: null,
@@ -273,6 +276,7 @@ export const discoverProject = (directory: string): ProjectInfo => {
     version: workspaceFacts.valtioVersion,
   });
   const preactVersion = getPreactVersion(packageJson);
+  const remotionVersion = workspaceFacts.remotionVersion;
   const isPreES2023Target = hasTypeScript && detectPreES2023Target(directory);
 
   const projectInfo: ProjectInfo = {
@@ -290,6 +294,10 @@ export const discoverProject = (directory: string): ProjectInfo => {
     hasTanStackQuery: hasTanStackQuery(packageJson),
     valtioVersion,
     valtioMajorVersion: valtioVersion === null ? null : getLowestDependencyMajor(valtioVersion),
+    hasRemotion: workspaceFacts.hasRemotionDependency,
+    remotionVersion,
+    remotionMajorVersion:
+      remotionVersion === null ? null : getLowestDependencyMajor(remotionVersion),
     hasSsrDependency: workspaceFacts.hasSsrDependency,
     preactVersion,
     preactMajorVersion: parseReactMajor(preactVersion),

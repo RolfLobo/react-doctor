@@ -29,6 +29,7 @@ export type Capability =
   // ruleset cache key, so even "unknown" is load-bearing).
   | FrameworkToken
   | "react"
+  | "remotion"
   | "pure-preact"
   | "react-native"
   | "server-actions"
@@ -50,6 +51,7 @@ export type Capability =
   // core's constants (`EARLIEST_GATED_*` / `LATEST_KNOWN_*`).
   | `react:${number}`
   | `preact:${number}`
+  | `remotion:${number}`
   | `valtio:${number}`;
 
 // The shape rules use to query the project's capability set — implemented
