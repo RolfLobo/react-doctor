@@ -389,6 +389,41 @@ describe("react-native collectors", () => {
   });
 });
 
+describe("Ink collectors", () => {
+  it("records the owning manifest when no installed Ink package is available", () => {
+    writeFixtureFile("package.json", `{ "dependencies": { "ink": "^7.1.0" } }\n`);
+    const appPath = writeFixtureFile("src/App.tsx", "export const App = () => null;\n");
+    const trace = collectFor(appPath, ["ink-no-raw-text"]);
+    expect(trace?.contentPaths.has(fixturePath("package.json"))).toBe(true);
+    expect(trace?.existencePaths.has(fixturePath("src/package.json"))).toBe(true);
+  });
+
+  it("records imported JSX wrappers for ink-no-raw-text", () => {
+    writeFixtureFile("package.json", `{ "dependencies": { "ink": "^7.1.0" } }\n`);
+    writeFixtureFile(
+      "src/Panel.tsx",
+      `import { Box } from "ink";\nexport const Panel = ({ children }) => <Box>{children}</Box>;\n`,
+    );
+    writeFixtureFile("src/helper.ts", "export const helper = () => 1;\n");
+    const appPath = writeFixtureFile(
+      "src/App.tsx",
+      `import { Panel } from "./Panel";\nimport { helper } from "./helper";\nexport const App = () => <Panel>hi {helper()}</Panel>;\n`,
+    );
+    const trace = collectFor(appPath, ["ink-no-raw-text"]);
+    expect(trace?.contentPaths.has(fixturePath("src/Panel.tsx"))).toBe(true);
+    expect(trace?.contentPaths.has(fixturePath("src/helper.ts"))).toBe(false);
+  });
+
+  it("records the installed Ink manifest instead of the declared range", () => {
+    writeFixtureFile("package.json", `{ "dependencies": { "ink": "^3.0.0" } }\n`);
+    writeFixtureFile("node_modules/ink/package.json", `{ "name": "ink", "version": "7.1.1" }\n`);
+    const appPath = writeFixtureFile("src/App.tsx", "export const App = () => null;\n");
+    const trace = collectFor(appPath, ["ink-use-suspend-terminal"]);
+    expect(trace?.contentPaths.has(fixturePath("node_modules/ink/package.json"))).toBe(true);
+    expect(trace?.contentPaths.has(fixturePath("package.json"))).toBe(false);
+  });
+});
+
 describe("no-create-ref-in-function-component collector", () => {
   it("records the modules in the createRef consumer chain on warm and cold collection", () => {
     writeFixtureFile(
