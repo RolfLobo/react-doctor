@@ -20,6 +20,7 @@ import {
 } from "../../utils/is-never-rejecting-expression.js";
 import { isFunctionLike } from "../../utils/is-function-like.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
+import { isProvenNonThrowingBuiltInCall } from "../../utils/is-proven-non-throwing-built-in-call.js";
 import { isReactApiCall } from "../../utils/is-react-api-call.js";
 import { isReactHookResultReference } from "../../utils/is-react-hook-result-reference.js";
 import type { ResolvedCrossFileExport } from "../../utils/resolve-cross-file-export.js";
@@ -686,6 +687,7 @@ const helperHasUnhandledSynchronousCall = (
       ancestor = ancestor.parent ?? null;
     }
     if (isInsideNonRethrowingTry(child, helper)) return;
+    if (scopes && isProvenNonThrowingBuiltInCall(child, scopes)) return;
     if (
       isPromiseResolveCall(child, scopes) ||
       chainCarriesRejectionHandler(child, scopes) ||
@@ -720,13 +722,6 @@ const helperHasUnhandledSynchronousCall = (
     }
     if (isNodeOfType(callee, "MemberExpression")) {
       const receiver = stripParenExpression(callee.object);
-      if (
-        isNodeOfType(receiver, "Identifier") &&
-        receiver.name === "console" &&
-        (!scopes || scopes.isGlobalReference(receiver))
-      ) {
-        return;
-      }
       if (getStaticPropertyName(callee) === "push" && isNodeOfType(receiver, "Identifier")) {
         const receiverSymbol = scopes?.symbolFor(receiver);
         const receiverInitializer = receiverSymbol?.initializer
@@ -1470,6 +1465,7 @@ const isProvenNonThrowingSynchronousCall = (
   callNode: EsTreeNodeOfType<"CallExpression">,
   context: RuleContext,
 ): boolean => {
+  if (isProvenNonThrowingBuiltInCall(callNode, context.scopes)) return true;
   const callee = stripParenExpression(callNode.callee);
   if (isNodeOfType(callee, "Identifier")) {
     if (
@@ -1477,6 +1473,16 @@ const isProvenNonThrowingSynchronousCall = (
       (context.scopes.isGlobalReference(callee) && REACT_SETTER_CALLEE_PATTERN.test(callee.name))
     ) {
       return true;
+    }
+    if (context.scopes.isGlobalReference(callee) && callee.name === "String") {
+      const firstArgument = callNode.arguments[0];
+      const strippedArgument = firstArgument ? stripParenExpression(firstArgument) : null;
+      return Boolean(
+        callNode.arguments.length === 1 &&
+        strippedArgument &&
+        isNodeOfType(strippedArgument, "Identifier") &&
+        context.scopes.symbolFor(strippedArgument)?.kind === "catch-clause-parameter",
+      );
     }
     const localFunction = resolveExactLocalFunction(callee, context.scopes);
     if (localFunction && isFunctionLike(localFunction) && !localFunction.async) {
@@ -1491,13 +1497,7 @@ const isProvenNonThrowingSynchronousCall = (
     }
     return false;
   }
-  if (!isNodeOfType(callee, "MemberExpression")) return false;
-  const receiver = stripParenExpression(callee.object);
-  return Boolean(
-    isNodeOfType(receiver, "Identifier") &&
-    receiver.name === "console" &&
-    context.scopes.isGlobalReference(receiver),
-  );
+  return false;
 };
 
 const subtreeHasAbruptSynchronousOperation = (
