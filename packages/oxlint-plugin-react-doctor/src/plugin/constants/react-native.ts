@@ -90,6 +90,7 @@ export const LEGACY_EXPO_PACKAGE_REPLACEMENTS = new Map<string, string>([
 ]);
 
 export const FLASH_LIST_V2_MAJOR = 2;
+export const MAX_RENDERED_ROOT_SHAPE_ALTERNATIVE_COUNT = 64;
 
 // Expo's Universal UI (`@expo/ui`) entry points. The universal package
 // re-exports the platform-specific builds, so a component may be imported
@@ -126,8 +127,22 @@ export const REACT_NATIVE_BUILTIN_LIST_COMPONENTS = new Set([
 // Shopify/Legend recycler.
 export const RECYCLABLE_LIST_PACKAGES: Record<string, ReadonlyArray<string>> = {
   FlashList: ["@shopify/flash-list"],
-  LegendList: ["@legendapp/list"],
+  AnimatedFlashList: ["@shopify/flash-list"],
+  LegendList: ["@legendapp/list", "@legendapp/list/react-native"],
+  AnimatedLegendList: ["@legendapp/list/animated", "@legendapp/list/reanimated"],
+  KeyboardAwareLegendList: ["@legendapp/list/keyboard"],
+  KeyboardAvoidingLegendList: ["@legendapp/list/keyboard-legacy"],
 };
+
+export const SHOPIFY_FLASH_LIST_COMPONENTS = new Set(["FlashList", "AnimatedFlashList"]);
+
+export const LEGEND_LIST_V3_PACKAGE_SOURCES = new Set([
+  "@legendapp/list/react-native",
+  "@legendapp/list/animated",
+  "@legendapp/list/reanimated",
+  "@legendapp/list/keyboard",
+  "@legendapp/list/keyboard-legacy",
+]);
 
 // Flat list of every recycler-owning package source, for whole-file
 // import-presence gates: a file importing none of these can never resolve a
