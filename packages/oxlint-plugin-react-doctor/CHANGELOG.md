@@ -1,5 +1,11 @@
 # oxlint-plugin-react-doctor
 
+## 0.9.2
+
+### Patch Changes
+
+- [#1427](https://github.com/millionco/react-doctor/pull/1427) [`5d2f66d`](https://github.com/millionco/react-doctor/commit/5d2f66d055447e3d91b725564e735fb87c25f8d9) Thanks [@aidenybai](https://github.com/aidenybai)! - Add React Native diagnostics for Reanimated 4 migrations, Gorhom Bottom Sheet integration, Expo platform tree shaking, Babel plugin order, and Android release shrinking. Expand recycler support to current Legend List and animated FlashList entrypoints, follow proven same-file renderer indirection, tighten heterogeneous recycler detection, and refresh outdated React Native recommendations.
+
 ## 0.9.1
 
 ### Patch Changes
