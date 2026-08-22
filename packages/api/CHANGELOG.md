@@ -1,5 +1,12 @@
 # @react-doctor/api
 
+## 0.9.13
+
+### Patch Changes
+
+- Updated dependencies [[`77aec24`](https://github.com/millionco/react-doctor/commit/77aec24f42fa8a2c55504550df929ea3985b7748)]:
+  - @react-doctor/core@0.9.13
+
 ## 0.9.12
 
 ### Patch Changes
