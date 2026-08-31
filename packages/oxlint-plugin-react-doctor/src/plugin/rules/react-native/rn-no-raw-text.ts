@@ -19,6 +19,7 @@ import { resolveImportedComponentForwarding } from "../../utils/resolve-imported
 import { isExpoUiComponentElement } from "./utils/is-expo-ui-component-element.js";
 import { isNodeOfType } from "../../utils/is-node-of-type.js";
 import type { EsTreeNodeOfType } from "../../utils/es-tree-node-of-type.js";
+import { enclosingComponentOrHookName } from "../../utils/enclosing-component-or-hook-name.js";
 
 const truncateText = (text: string): string => {
   const collapsedText = text.replace(/\s+/g, " ");
@@ -105,6 +106,7 @@ export const rnNoRawText = defineRule({
     // the rest (`node_modules` and anything the resolver can't follow).
     let autoDetectedTextWrappers: ReadonlySet<string> = new Set();
     let autoDetectedNonTextWrappers: ReadonlySet<string> = new Set();
+    let autoDetectedTranslationTextReturnComponents: ReadonlySet<string> = new Set();
 
     // A built-in crash host: a React Native host primitive, or a lowercase
     // intrinsic that is NOT a known HTML/SVG tag (`fbt`, a typo'd primitive).
@@ -180,6 +182,8 @@ export const rnNoRawText = defineRule({
         );
         autoDetectedTextWrappers = childrenForwarding.textWrappers;
         autoDetectedNonTextWrappers = childrenForwarding.nonTextWrappers;
+        autoDetectedTranslationTextReturnComponents =
+          childrenForwarding.translationTextReturnComponents;
       },
       JSXElement(node: EsTreeNodeOfType<"JSXElement">) {
         if (isDomComponentFile) return;
@@ -214,6 +218,13 @@ export const rnNoRawText = defineRule({
         if (isInsidePlatformOsWebBranch(node)) return;
 
         if (isTransparentTextWrapper(elementName) && isInsideTextHandlingComponent(node)) {
+          return;
+        }
+
+        if (
+          isTransparentTextWrapper(elementName) &&
+          autoDetectedTranslationTextReturnComponents.has(enclosingComponentOrHookName(node) ?? "")
+        ) {
           return;
         }
 

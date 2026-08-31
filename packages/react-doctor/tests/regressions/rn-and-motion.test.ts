@@ -408,7 +408,7 @@ export const App = () => (
     expect(diagnostics).toHaveLength(0);
   });
 
-  it("still reports raw text when <fbt> is outside <Text>", async () => {
+  it("does not report when a component returns only fbt (issue #1729)", async () => {
     const projectDirectory = buildFbteeProject(
       "issue-581-fbt-outside-text",
       `export const App = () => <fbt desc="Greeting">Welcome</fbt>;
@@ -416,7 +416,7 @@ export const App = () => (
     );
 
     const diagnostics = await getRnNoRawTextDiagnostics(projectDirectory);
-    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics).toHaveLength(0);
   });
 });
 

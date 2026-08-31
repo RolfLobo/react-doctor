@@ -594,6 +594,88 @@ describe("react-native/rn-no-raw-text", () => {
         );
       `);
     });
+
+    it("does not fire on a component whose direct return is fbt (issue #1729)", () => {
+      expectPass(`
+        const FbtLabel = () => <fbt desc="d">Travel with confidence</fbt>;
+        const StringLabel = () => "Travel with confidence";
+        const Screen = () => (
+          <Text>
+            <FbtLabel />
+            <StringLabel />
+          </Text>
+        );
+      `);
+    });
+
+    it("does not fire when every direct JSX return is fbt or fbs", () => {
+      expectPass(`
+        const MotivationLabel = ({ motivation }) => {
+          switch (motivation) {
+            case "travel": {
+              return <fbt desc="travel">Travel with confidence</fbt>;
+            }
+            case "career": {
+              return <fbs>Grow my career</fbs>;
+            }
+          }
+        };
+        const Screen = () => (
+          <Text>
+            <MotivationLabel motivation="travel" />
+          </Text>
+        );
+      `);
+    });
+
+    it("does not fire on an HOC-wrapped function returning fbt", () => {
+      expectPass(`
+        const FbtLabel = memo(() => <fbt desc="d">Travel with confidence</fbt>);
+        const Screen = () => (
+          <Text>
+            <FbtLabel />
+          </Text>
+        );
+      `);
+    });
+
+    it("still fires on fbt inside a component that also returns non-transparent elements", () => {
+      expectFail(`
+        const MixedComponent = ({ type }) => {
+          if (type === "fbt") {
+            return <fbt desc="d">Text</fbt>;
+          }
+          return <View>Non-text</View>;
+        };
+        const Screen = () => (
+          <Text>
+            <MixedComponent type="fbt" />
+          </Text>
+        );
+      `);
+    });
+
+    it("still fires when fbt is nested under a fragment return", () => {
+      expectFail(`
+        const FbtMarker = () => (
+          <Fragment>
+            <fbt desc="d">Travel with confidence</fbt>
+          </Fragment>
+        );
+        const Screen = () => <Text><FbtMarker /></Text>;
+      `);
+    });
+
+    it("does not classify a direct fbt return as a Text wrapper", () => {
+      expectFail(`
+        const FbtMarker = ({ children }) => <fbt desc="d">Label</fbt>;
+        const Screen = () => (
+          <FbtMarker>
+            <fbt desc="nested">Nested label</fbt>
+          </FbtMarker>
+        );
+      `);
+    });
   });
 
   describe("test-noise suppression", () => {
