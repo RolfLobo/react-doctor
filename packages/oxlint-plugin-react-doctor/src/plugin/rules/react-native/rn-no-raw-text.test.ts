@@ -655,14 +655,111 @@ describe("react-native/rn-no-raw-text", () => {
       `);
     });
 
-    it("still fires when fbt is nested under a fragment return", () => {
-      expectFail(`
+    it("does not fire when fbt is nested under a fragment return", () => {
+      expectPass(`
         const FbtMarker = () => (
           <Fragment>
             <fbt desc="d">Travel with confidence</fbt>
           </Fragment>
         );
         const Screen = () => <Text><FbtMarker /></Text>;
+      `);
+    });
+
+    it("still fires when a fragment return mixes fbt with a non-text element", () => {
+      expectFail(`
+        const MixedComponent = () => (
+          <>
+            <fbt desc="label">Morning</fbt>
+            <View>icon</View>
+          </>
+        );
+        const Screen = () => (
+          <Text>
+            <MixedComponent />
+          </Text>
+        );
+      `);
+    });
+
+    it("does not fire on fragment returns mixing fbt with literal text (issue #1731)", () => {
+      expectPass(`
+        const ReminderLabel = ({ reminder }) => {
+          switch (reminder) {
+            case "none": {
+              return <fbt desc="no reminder">No reminder</fbt>;
+            }
+            case "morning": {
+              return (
+                <>
+                  <fbt desc="morning reminder">Morning</fbt>, 7:00 AM
+                </>
+              );
+            }
+          }
+        };
+        const Screen = () => (
+          <Text>
+            <ReminderLabel reminder="morning" />
+          </Text>
+        );
+      `);
+    });
+
+    it("does not fire on static expression text beside translation elements", () => {
+      expectPass(`
+        const FbtMarker = () => (
+          <>
+            <fbt desc="label">Morning</fbt>
+            {", 7:00 AM"}
+          </>
+        );
+        const Screen = () => <Text><FbtMarker /></Text>;
+      `);
+    });
+
+    it("does not fire on translation elements inside nested fragment expressions", () => {
+      expectPass(`
+        const FbtMarker = ({ useShortLabel }) => (
+          <>
+            <Fragment>
+              {useShortLabel ? <fbt desc="short">AM</fbt> : <fbs>Morning</fbs>}
+            </Fragment>
+          </>
+        );
+        const Screen = () => <Text><FbtMarker useShortLabel /></Text>;
+      `);
+    });
+
+    it("still fires when a fragment contains an opaque expression", () => {
+      expectFail(`
+        const MixedComponent = ({ content }) => (
+          <>
+            <fbt desc="label">Morning</fbt>
+            {content}
+          </>
+        );
+        const Screen = () => (
+          <Text>
+            <MixedComponent content={<View>icon</View>} />
+          </Text>
+        );
+      `);
+    });
+
+    it("still fires when an expression can render a non-text element", () => {
+      expectFail(`
+        const MixedComponent = ({ showIcon }) => (
+          <>
+            <fbt desc="label">Morning</fbt>
+            {showIcon && <View>icon</View>}
+          </>
+        );
+        const Screen = () => (
+          <Text>
+            <MixedComponent showIcon />
+          </Text>
+        );
       `);
     });
 
